@@ -27,8 +27,20 @@ namespace GhPlugins
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var dialog = new ModeManagerDialog();
-            dialog.ShowModal(Rhino.UI.RhinoEtoApp.MainWindow);
+            RhinoApp.WriteLine("RunCommand reached successfully.");
+
+            try
+            {
+                var dialog = new ModeManagerDialog();
+                RhinoApp.WriteLine("Dialog constructed.");
+                dialog.ShowModal(Rhino.UI.RhinoEtoApp.MainWindow);
+                RhinoApp.WriteLine("Dialog ShowModal finished.");
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine("ERROR in dialog: " + ex.Message);
+            }
+
             return Result.Success;
         }
     }

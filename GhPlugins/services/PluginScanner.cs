@@ -1,43 +1,48 @@
-﻿using System;
+﻿// File: Services/PluginScanner.cs
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using GhPlugins.Models;
 
 namespace GhPlugins.Services
 {
     public static class PluginScanner
     {
-
-        private static List<PluginItem> ScanFolder(string folder)
+        public static List<PluginItem> ScanDefaultPluginFolders()
         {
-            var list = new List<PluginItem>();
-            if (Directory.Exists(folder))
-            {
-                string[] extensions = new[] { ".gha", ".ghpy", ".dll" };
+            var pluginItems = new List<PluginItem>();
 
-                foreach (string file in Directory.GetFiles(folder))
+            // Standard Grasshopper user plugin location
+            string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string userLibPath = Path.Combine(roaming, "Grasshopper", "Libraries");
+            if (Directory.Exists(userLibPath))
+                pluginItems.AddRange(ScanDirectory(userLibPath));
+
+            // Yak packages plugin location (optional)
+            string yakPath = Path.Combine(roaming, "McNeel", "Rhinoceros", "packages");
+            if (Directory.Exists(yakPath))
+            {
+                foreach (var pkg in Directory.GetDirectories(yakPath))
                 {
-                    string ext = Path.GetExtension(file).ToLower();
-                    if (Array.Exists(extensions, e => e == ext))
-                    {
-                        list.Add(new PluginItem(Path.GetFileName(file), file));
-                    }
+                    string versionDir = Directory.GetDirectories(pkg).FirstOrDefault();
+                    if (versionDir != null)
+                        pluginItems.AddRange(ScanDirectory(versionDir));
                 }
             }
-            return list;
+
+            return pluginItems;
         }
 
-        private static List<PluginItem> ScanYakPackages(string yakFolder)
+        private static List<PluginItem> ScanDirectory(string path)
         {
             var list = new List<PluginItem>();
-            if (!Directory.Exists(yakFolder)) return list;
 
-            foreach (string packageDir in Directory.GetDirectories(yakFolder))
+            var ghaFiles = Directory.GetFiles(path, "*.gha", SearchOption.TopDirectoryOnly);
+            foreach (var gha in ghaFiles)
             {
-                foreach (string versionDir in Directory.GetDirectories(packageDir))
-                {
-                    list.AddRange(ScanFolder(versionDir));
-                }
+                string name = Path.GetFileName(gha);
+                list.Add(new PluginItem(name, gha));
             }
 
             return list;

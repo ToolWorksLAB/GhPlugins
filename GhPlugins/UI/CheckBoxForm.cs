@@ -1,41 +1,41 @@
-﻿using Eto.Forms;
-using Eto.Drawing;
+﻿using System;
 using System.Collections.Generic;
+using Eto.Drawing;
+using Eto.Forms;
 using GhPlugins.Models;
 
 namespace GhPlugins.UI
 {
     public class CheckBoxForm : Dialog<DialogResult>
     {
-        private List<CheckBox> checkBoxes = new List<CheckBox>();
-
         public CheckBoxForm(List<PluginItem> plugins)
         {
             Title = "Select Plugins";
-            ClientSize = new Size(400, 400);
+            ClientSize = new Size(400, 500);
             Resizable = true;
 
-            var layout = new DynamicLayout { Padding = new Padding(10), Spacing = new Size(5, 5) };
+            var layout = new DynamicLayout { Padding = 10, Spacing = new Size(5, 5) };
 
             foreach (var plugin in plugins)
             {
-                var cb = new CheckBox { Text = plugin.Name };
-                layout.Add(cb);
-                checkBoxes.Add(cb);
+                var checkbox = new CheckBox { Text = plugin.Name, Checked = plugin.IsSelected };
+                checkbox.CheckedChanged += (s, e) =>
+                {
+                    plugin.IsSelected = checkbox.Checked ?? false;
+                };
+                layout.Add(checkbox);
             }
 
-            var okButton = new Button { Text = "OK" };
-            okButton.Click += (s, e) =>
+            var doneButton = new Button { Text = "Done" };
+            doneButton.Click += (s, e) => Close(DialogResult.Ok);
+
+            layout.Add(null); // spacer
+            layout.Add(doneButton, yscale: false);
+
+            Content = new Scrollable
             {
-                for (int i = 0; i < checkBoxes.Count; i++)
-                    plugins[i].IsSelected = checkBoxes[i].Checked == true;
-
-                Result = DialogResult.Ok;
-                Close();
+                Content = layout
             };
-
-            layout.AddSeparateRow(null, okButton, null);
-            Content = layout;
         }
     }
 }
