@@ -26,6 +26,18 @@
   </ItemGroup>
   
   <ItemGroup>
+    <COMReference Include="VSLangProj90">
+      <WrapperTool>tlbimp</WrapperTool>
+      <VersionMinor>0</VersionMinor>
+      <VersionMajor>9</VersionMajor>
+      <Guid>dcbf68c6-da4b-44f5-b9e0-1563ec000392</Guid>
+      <Lcid>0</Lcid>
+      <Isolated>false</Isolated>
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </COMReference>
+  </ItemGroup>
+  
+  <ItemGroup>
     <EmbeddedResource Include="Resources\logo.png">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </EmbeddedResource>
@@ -34,6 +46,8 @@
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <Reference Include="Microsoft.CSharp" />
+
   </ItemGroup>
   
   <Target Name="BuildYakPackage" AfterTargets="DispatchToInnerBuilds">

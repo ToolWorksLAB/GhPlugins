@@ -8,6 +8,8 @@ using Eto.Forms;
 using GhPlugins.Models;
 using GhPlugins.Services;
 using Rhino;
+using Rhino.PlugIns;
+using Rhino.Render.CustomRenderMeshes;
 
 namespace GhPlugins.UI
 {
@@ -148,26 +150,15 @@ namespace GhPlugins.UI
             }
         }
 
-        private void LaunchGrasshopper()
+        public  void LaunchGrasshopper()
         {
-            // ✅ 1. Use Grasshopper plugin ID
-            Guid ghPluginId = new Guid("b45a29b1-4343-4035-989e-044e8580d9cf");
-
-            // ✅ 2. Call LoadPlugIn by ID — no 'out', no bool
-            var plugin = Rhino.PlugIns.PlugIn.LoadPlugIn(ghPluginId);
-
-            // ✅ 3. Check if plugin loaded
-            if (plugin == null)
+            dynamic grasshopper = RhinoApp.GetPlugInObject("Grasshopper");
+            if (!grasshopper.IsEditorLoaded())
             {
-                RhinoApp.WriteLine("❌ Could not load Grasshopper plugin.");
-                return;
+                grasshopper.LoadEditor();
             }
 
-            // ✅ 4. Run Grasshopper
-            RhinoApp.RunScript("_Grasshopper", false);
-
         }
-
 
 
 
