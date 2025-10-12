@@ -25,9 +25,12 @@ namespace GhPlugins.Services
             {
                 foreach (var pkg in Directory.GetDirectories(yakPath))
                 {
-                    string versionDir = Directory.GetDirectories(pkg).FirstOrDefault();
+                    string[] versionDir = Directory.GetDirectories(pkg);
                     if (versionDir != null)
-                        pluginItems.AddRange(ScanDirectory(versionDir));
+                        for (int i = 0; i < versionDir.Length; i++)
+                        {
+                            pluginItems.AddRange(ScanDirectory(versionDir[i]));
+                        }
                 }
             }
 
@@ -38,7 +41,7 @@ namespace GhPlugins.Services
         {
             var list = new List<PluginItem>();
 
-            var ghaFiles = Directory.GetFiles(path, "*.gha", SearchOption.TopDirectoryOnly);
+            var ghaFiles = Directory.GetFiles(path, "*.gha", SearchOption.AllDirectories);
             foreach (var gha in ghaFiles)
             {
                 string name = Path.GetFileName(gha);

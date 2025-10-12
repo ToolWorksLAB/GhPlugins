@@ -8,13 +8,12 @@ using Eto.Forms;
 using GhPlugins.Models;
 using GhPlugins.Services;
 using Rhino;
-using Rhino.PlugIns;
-using Rhino.Render.CustomRenderMeshes;
 
 namespace GhPlugins.UI
 {
     public class ModeManagerDialog : Dialog
     {
+        private readonly GhEnvironmentApplier _envApplier = new GhEnvironmentApplier();
         private Button createButton;
         private Button selectPluginsButton;
         private Button selectEnvironmentButton;
@@ -51,24 +50,15 @@ namespace GhPlugins.UI
                 }
             };
 
-            // Initialize the logo (default to null)
+            // Optional logo
             ImageView logo = null;
-
             var assembly = Assembly.GetExecutingAssembly();
             using (var stream = assembly.GetManifestResourceStream("GhPlugins.Resources.logo.png"))
             {
                 if (stream != null)
                 {
                     var logoBitmap = new Bitmap(stream);
-                    logo = new ImageView
-                    {
-                        Image = logoBitmap,
-                        Size = new Size(80, 80)
-                    };
-                }
-                else
-                {
-                    RhinoApp.WriteLine("⚠️ Could not load logo.png from embedded resources.");
+                    logo = new ImageView { Image = logoBitmap, Size = new Size(80, 80) };
                 }
             }
 
@@ -77,16 +67,9 @@ namespace GhPlugins.UI
                 Orientation = Orientation.Horizontal,
                 Spacing = 10,
                 Padding = new Padding(10),
-                Items =
-                {
-                    new StackLayoutItem(launchButton, HorizontalAlignment.Stretch, true)
-                }
+                Items = { new StackLayoutItem(launchButton, HorizontalAlignment.Stretch, true) }
             };
-
-            if (logo != null)
-            {
-                bottomPanel.Items.Add(new StackLayoutItem(logo, HorizontalAlignment.Right));
-            }
+            if (logo != null) bottomPanel.Items.Add(new StackLayoutItem(logo, HorizontalAlignment.Right));
 
             Content = new StackLayout
             {
@@ -125,8 +108,11 @@ namespace GhPlugins.UI
 
             if (checkForm.ShowModal(this) == DialogResult.Ok)
             {
-                selectedEnvironment = new ModeConfig("Manual", allPlugins.Where(p => p.IsSelected).Select(p => p.Path).ToList());
-                launchButton.Enabled = true;
+                selectedEnvironment = new ModeConfig(
+                    "Manual",
+                    allPlugins.Where(p => p.IsSelected).Select(p => p.Path).ToList()
+                );
+                launchButton.Enabled = selectedEnvironment.PluginPaths?.Count > 0;
             }
         }
 
@@ -146,21 +132,61 @@ namespace GhPlugins.UI
             {
                 string selectedName = dialog.SelectedItem;
                 selectedEnvironment = environments.FirstOrDefault(e => e.Name == selectedName);
-                launchButton.Enabled = selectedEnvironment != null;
+                launchButton.Enabled = selectedEnvironment != null && selectedEnvironment.PluginPaths?.Count > 0;
             }
         }
 
-        public  void LaunchGrasshopper()
+        // -------- THE IMPORTANT PART --------
+        public void LaunchGrasshopper()
         {
-            dynamic grasshopper = RhinoApp.GetPlugInObject("Grasshopper");
-            if (!grasshopper.IsEditorLoaded())
+            if (selectedEnvironment == null || selectedEnvironment.PluginPaths == null || selectedEnvironment.PluginPaths.Count == 0)
             {
-                grasshopper.LoadEditor();
+                MessageBox.Show(this, "Select an Environment first.", "Mode Manager", MessageBoxButtons.OK);
+                return;
             }
 
+            try
+            {
+                // 1) Apply the environment (writes .no6/.no7/.no8 + optional .ghlink)
+                _envApplier.Apply(selectedEnvironment.Name, selectedEnvironment.PluginPaths);
+                RhinoApp.WriteLine($"[Gh Mode Manager] Environment '{selectedEnvironment.Name}' applied.");
+
+                // 2) Close this modal dialog FIRST so GH can show its window
+                //    Then we will launch GH on the next Rhino idle tick.
+                RhinoApp.Idle += LaunchGrasshopperOnIdle;
+                this.Close();
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine("ERROR in LaunchGrasshopper: " + ex);
+                MessageBox.Show(this, "Failed to launch Grasshopper. See Rhino command line for details.", "Mode Manager");
+            }
         }
 
+        // one-shot idle handler to run AFTER the dialog has fully closed
+        // one-shot idle handler to run AFTER the dialog has fully closed
+        private void LaunchGrasshopperOnIdle(object sender, EventArgs e)
+        {
+            Rhino.RhinoApp.Idle -= LaunchGrasshopperOnIdle;
+            try
+            {
+                dynamic gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper");
+                if (!gh.IsEditorLoaded())
+                    gh.LoadEditor();
 
+                // Try to show editor explicitly (if available)
+                try { gh.ShowEditor(true); } catch { /* not on all builds */ }
+
+                // Fallback to command to force the editor window visible
+                Rhino.RhinoApp.RunScript("-_Grasshopper _Editor _Enter", false);
+            }
+            catch (Exception ex)
+            {
+                Rhino.RhinoApp.WriteLine("ERROR launching Grasshopper: " + ex);
+            }
+        }
+
+        // ------------------------------------
 
         private string InputBox(string message)
         {
