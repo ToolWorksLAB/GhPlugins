@@ -168,23 +168,32 @@ namespace GhPlugins.UI
         private void LaunchGrasshopperOnIdle(object sender, EventArgs e)
         {
             Rhino.RhinoApp.Idle -= LaunchGrasshopperOnIdle;
+
             try
             {
                 dynamic gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper");
                 if (!gh.IsEditorLoaded())
-                    gh.LoadEditor();
+                {
+                    // Load first
+                    Rhino.RhinoApp.RunScript("-_Grasshopper _Load _Enter", false);
+                }
 
-                // Try to show editor explicitly (if available)
-                try { gh.ShowEditor(true); } catch { /* not on all builds */ }
-
-                // Fallback to command to force the editor window visible
-                Rhino.RhinoApp.RunScript("-_Grasshopper _Editor _Enter", false);
+                // Nudge the editor to show on next UI tick
+                var t = new Eto.Forms.UITimer { Interval = 0.15 };
+                t.Elapsed += (s2, e2) =>
+                {
+                    t.Stop();
+                    try { gh.ShowEditor(true); } catch { /* not on all builds */ }
+                    Rhino.RhinoApp.RunScript("-_Grasshopper _Editor _Enter", false);
+                };
+                t.Start();
             }
             catch (Exception ex)
             {
                 Rhino.RhinoApp.WriteLine("ERROR launching Grasshopper: " + ex);
             }
         }
+
 
         // ------------------------------------
 

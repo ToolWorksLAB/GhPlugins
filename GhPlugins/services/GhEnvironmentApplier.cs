@@ -27,11 +27,22 @@ namespace GhPlugins.Services
 
         IEnumerable<string> YakRoots()
         {
-            // support both 7.0 and 8.0 side-by-side installs
+            // Support both layouts:
+            //   %AppData%\McNeel\Rhinoceros\<major>\packages
+            //   %AppData%\McNeel\Rhinoceros\packages\<major>
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var baseRhi = Path.Combine(appData, "McNeel", "Rhinoceros");
+
             foreach (var major in new[] { "7.0", "8.0" })
-                yield return Path.Combine(appData, "McNeel", "Rhinoceros", major, "packages");
+            {
+                var a = Path.Combine(baseRhi, major, "packages");
+                var b = Path.Combine(baseRhi, "packages", major);
+
+                if (Directory.Exists(a)) yield return a;
+                if (Directory.Exists(b)) yield return b;
+            }
         }
+
 
         IEnumerable<string> ExistingGhlinkTargets()
         {
