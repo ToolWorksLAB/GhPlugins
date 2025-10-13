@@ -82,7 +82,7 @@ namespace GhPlugins.UI
 
         private void CreateEnvironment()
         {
-            allPlugins = PluginScanner.ScanDefaultPluginFolders();
+            allPlugins = PluginScanner.pluginItems;
             var checkForm = new CheckBoxForm(allPlugins);
 
             if (checkForm.ShowModal(this) == DialogResult.Ok)
@@ -103,7 +103,7 @@ namespace GhPlugins.UI
 
         private void ManualPluginSelection()
         {
-            allPlugins = PluginScanner.ScanDefaultPluginFolders();
+            allPlugins = PluginScanner.pluginItems;
             var checkForm = new CheckBoxForm(allPlugins);
 
             if (checkForm.ShowModal(this) == DialogResult.Ok)
