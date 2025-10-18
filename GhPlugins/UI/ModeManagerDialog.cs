@@ -8,6 +8,7 @@ using Eto.Forms;
 using GhPlugins.Models;
 using GhPlugins.Services;
 using Rhino;
+using Rhino.PlugIns;
 
 namespace GhPlugins.UI
 {
@@ -23,6 +24,7 @@ namespace GhPlugins.UI
 
         public ModeManagerDialog()
         {
+            
             Title = "Grasshopper Mode Manager";
             ClientSize = new Size(600, 300);
             Resizable = false;
@@ -82,6 +84,22 @@ namespace GhPlugins.UI
 
         private void CreateEnvironment()
         {
+            var info = GhaInfoReader.ReadPluginInfo("C:/Users/erfan/AppData/Roaming/Grasshopper/Libraries/chromodoris.gha");
+            if (info != null)
+            {
+                RhinoApp.WriteLine($"Name: {info.Name}");
+                RhinoApp.WriteLine($"Version: {info.Version}");
+                RhinoApp.WriteLine($"Author: {info.AuthorName} ({info.AuthorContact})");
+                RhinoApp.WriteLine($"Description: {info.Description}");
+                RhinoApp.WriteLine($"Id: {info.Id}");
+                RhinoApp.WriteLine($"Location: {info.Location}");
+            }
+            else
+            {
+                Console.WriteLine("No GH_AssemblyInfo metadata found in that .gha");
+            }
+
+            PluginScanner.ScanDefaultPluginFolders();
             allPlugins = PluginScanner.pluginItems;
             var checkForm = new CheckBoxForm(allPlugins);
 
@@ -103,6 +121,7 @@ namespace GhPlugins.UI
 
         private void ManualPluginSelection()
         {
+            PluginScanner.ScanDefaultPluginFolders();
             allPlugins = PluginScanner.pluginItems;
             var checkForm = new CheckBoxForm(allPlugins);
 
@@ -137,6 +156,7 @@ namespace GhPlugins.UI
         }
 
         // -------- THE IMPORTANT PART --------
+        // -------- THE IMPORTANT PART --------
         public void LaunchGrasshopper()
         {
             if (selectedEnvironment == null || selectedEnvironment.PluginPaths == null || selectedEnvironment.PluginPaths.Count == 0)
@@ -147,12 +167,12 @@ namespace GhPlugins.UI
 
             try
             {
-                // 1) Apply the environment (writes .no6/.no7/.no8 + optional .ghlink)
-                _envApplier.Apply(selectedEnvironment.Name, selectedEnvironment.PluginPaths);
+                // 1) Apply the environment (writes .disabled + optional .ghlink)
+                _envApplier.Apply(selectedEnvironment.Name, allPlugins);
                 RhinoApp.WriteLine($"[Gh Mode Manager] Environment '{selectedEnvironment.Name}' applied.");
 
-                // 2) Close this modal dialog FIRST so GH can show its window
-                //    Then we will launch GH on the next Rhino idle tick.
+                // 2) Close this modal dialog FIRST so GH can show its window,
+                //    then launch on the next Rhino idle tick (keep original structure).
                 RhinoApp.Idle += LaunchGrasshopperOnIdle;
                 this.Close();
             }
@@ -162,8 +182,6 @@ namespace GhPlugins.UI
                 MessageBox.Show(this, "Failed to launch Grasshopper. See Rhino command line for details.", "Mode Manager");
             }
         }
-
-        // one-shot idle handler to run AFTER the dialog has fully closed
         // one-shot idle handler to run AFTER the dialog has fully closed
         private void LaunchGrasshopperOnIdle(object sender, EventArgs e)
         {
@@ -171,19 +189,30 @@ namespace GhPlugins.UI
 
             try
             {
-                dynamic gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper");
-                if (!gh.IsEditorLoaded())
+                // Make sure GH is actually loaded (safe across R7/R8; avoids GUID overload issues)
+                Rhino.RhinoApp.RunScript("-_Grasshopper _Load _Enter", false);
+
+                // Then get the scripting object (may be null briefly)
+                dynamic gh = null;
+                try { gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper"); } catch { /* ignore */ }
+
+                // Try to detect/load the editor, but guard calls (some builds lack these members)
+                bool editorLoaded = false;
+                if (gh != null)
                 {
-                    // Load first
-                    Rhino.RhinoApp.RunScript("-_Grasshopper _Load _Enter", false);
+                    try { editorLoaded = gh.IsEditorLoaded(); } catch { /* method may not exist */ }
+                    if (!editorLoaded)
+                    {
+                        try { gh.LoadEditor(); } catch { /* command fallback below will handle it */ }
+                    }
                 }
 
-                // Nudge the editor to show on next UI tick
+                // Nudge the editor to show on next UI tick (the “flash”)
                 var t = new Eto.Forms.UITimer { Interval = 0.15 };
                 t.Elapsed += (s2, e2) =>
                 {
                     t.Stop();
-                    try { gh.ShowEditor(true); } catch { /* not on all builds */ }
+                    try { gh?.ShowEditor(true); } catch { /* not on all builds */ }
                     Rhino.RhinoApp.RunScript("-_Grasshopper _Editor _Enter", false);
                 };
                 t.Start();
@@ -193,6 +222,7 @@ namespace GhPlugins.UI
                 Rhino.RhinoApp.WriteLine("ERROR launching Grasshopper: " + ex);
             }
         }
+
 
 
         // ------------------------------------

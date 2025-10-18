@@ -1,216 +1,324 @@
-﻿using System;
+﻿// File: Services/GhEnvironmentApplier.cs (C# 7.3 compatible)
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using GhPlugins.Models; // PluginItem: Name, Path, IsSelected, List<string> UserobjectPath
 using Rhino;
 
 namespace GhPlugins.Services
 {
-    /// <summary>
-    /// Applies a selected Grasshopper plugin set by:
-    ///  - writing .no6/.no7/.no8 sidecars for all non-selected GHAs
-    ///  - removing .no6/.no7/.no8 for selected GHAs
-    ///  - writing a .ghlink for extra selected folders (optional)
-    ///  - recording everything in a manifest so we can revert cleanly
-    /// </summary>
     public class GhEnvironmentApplier
     {
-        readonly string _appRoot = Path.Combine(
+        private readonly string _appRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "GhPlugins_ModeManager");
 
-        // ---------------- paths ----------------
+        private static readonly StringComparer CI = StringComparer.OrdinalIgnoreCase;
+        private const string DisabledSuffix = ".disabled";
 
-        string DefaultLibraries() =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                         "Grasshopper", "Libraries");
-
-        IEnumerable<string> YakRoots()
+        private string DefaultLibraries()
         {
-            // Support both layouts:
-            //   %AppData%\McNeel\Rhinoceros\<major>\packages
-            //   %AppData%\McNeel\Rhinoceros\packages\<major>
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Grasshopper", "Libraries");
+        }
+
+        private string DefaultUserObjects()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Grasshopper", "UserObjects");
+        }
+
+        private IEnumerable<string> YakRoots()
+        {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             var baseRhi = Path.Combine(appData, "McNeel", "Rhinoceros");
-
             foreach (var major in new[] { "7.0", "8.0" })
             {
                 var a = Path.Combine(baseRhi, major, "packages");
                 var b = Path.Combine(baseRhi, "packages", major);
-
                 if (Directory.Exists(a)) yield return a;
                 if (Directory.Exists(b)) yield return b;
             }
         }
 
-
-        IEnumerable<string> ExistingGhlinkTargets()
+        private IEnumerable<string> ExistingGhlinkTargets(string baseFolder)
         {
-            var libs = DefaultLibraries();
-            if (!Directory.Exists(libs)) yield break;
+            if (!Directory.Exists(baseFolder)) yield break;
 
-            foreach (var ghlink in Directory.EnumerateFiles(libs, "*.ghlink", SearchOption.TopDirectoryOnly))
+            foreach (var ghlink in Directory.EnumerateFiles(baseFolder, "*.ghlink", SearchOption.TopDirectoryOnly))
             {
-                foreach (var line in File.ReadAllLines(ghlink))
+                foreach (var raw in File.ReadAllLines(ghlink))
                 {
-                    var d = line.Trim();
+                    var d = (raw ?? string.Empty).Trim();
                     if (string.IsNullOrWhiteSpace(d)) continue;
+                    if (d.StartsWith("#", StringComparison.Ordinal)) continue; // allow comments
                     if (Directory.Exists(d)) yield return d;
                 }
             }
         }
 
-        IEnumerable<string> AllInstalledGhas(IEnumerable<string> extraProbeDirs)
-        {
-            var roots = new List<string> { DefaultLibraries() };
-            roots.AddRange(YakRoots());
-            roots.AddRange(ExistingGhlinkTargets());
-
-            if (extraProbeDirs != null)
-                roots.AddRange(extraProbeDirs.Where(Directory.Exists));
-
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var root in roots.Distinct())
-            {
-                if (!Directory.Exists(root)) continue;
-
-                foreach (var f in Directory.EnumerateFiles(root, "*.gha", SearchOption.AllDirectories))
-                {
-                    var name = Path.GetFileName(f);
-                    if (name.StartsWith("._")) continue; // ignore macOS resource-fork doubles
-                    set.Add(Path.GetFullPath(f));
-                }
-            }
-            return set;
-        }
-
-        // ---------------- manifest ----------------
-
-        string ManifestPath(string envName)
+        private string ManifestPath(string envName)
         {
             Directory.CreateDirectory(_appRoot);
-            return Path.Combine(_appRoot, $"{Sanitize(envName)}.manifest.txt");
+            return Path.Combine(_appRoot, Sanitize(envName) + ".manifest.txt");
         }
 
-        static string Sanitize(string name)
+        private static string Sanitize(string name)
         {
-            foreach (var c in Path.GetInvalidFileNameChars())
-                name = name.Replace(c, '_');
+            foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c.ToString(), "_");
             return name;
         }
 
-        public void Revert(string envName)
+        private static string StripDisabledSuffix(string path)
         {
-            var manifest = ManifestPath(envName);
-            if (!File.Exists(manifest)) return;
-
-            foreach (var line in File.ReadAllLines(manifest))
-            {
-                var path = line.Trim();
-                try
-                {
-                    if (File.Exists(path)) File.Delete(path);
-                }
-                catch { /* ignore */ }
-            }
-
-            try { File.Delete(manifest); } catch { /* ignore */ }
+            if (path != null && path.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                return path.Substring(0, path.Length - DisabledSuffix.Length);
+            return path;
         }
 
-        // ---------------- apply ----------------
-
-        public void Apply(string envName, IEnumerable<string> selectedGhaPaths)
+        /// <summary>Revert file operations recorded in the manifest (best-effort).</summary>
+        public void Revert(string envName)
         {
-            // C# 7.3: no '??='
-            if (selectedGhaPaths == null)
-                selectedGhaPaths = Enumerable.Empty<string>();
+            var path = ManifestPath(envName);
+            if (!File.Exists(path)) return;
 
-            // Clean slate for this env name
+            foreach (var line in File.ReadAllLines(path))
+            {
+                var parts = line.Split('\t');
+                if (parts.Length < 2) continue;
+
+                var op = parts[0];
+                try
+                {
+                    if (op == "REN" && parts.Length == 3)
+                    {
+                        var from = parts[1];
+                        var to = parts[2];
+                        if (File.Exists(to))
+                        {
+                            if (File.Exists(from)) File.Delete(from);
+                            File.Move(to, from);
+                        }
+                    }
+                    else if (op == "DEL" && parts.Length == 2)
+                    {
+                        var f = parts[1];
+                        if (File.Exists(f)) File.Delete(f);
+                    }
+                }
+                catch
+                {
+                    // ignore individual failures
+                }
+            }
+
+            try { File.Delete(path); } catch { /* ignore */ }
+        }
+
+        /// <summary>
+        /// Applies the selected environment: renames GHAs/UserObjects and writes .ghlink files.
+        /// </summary>
+        public void Apply(string envName, IEnumerable<PluginItem> items)
+        {
+            items = items ?? Enumerable.Empty<PluginItem>();
+
+            // Normalize *.gha and *.gha.disabled to their base *.gha for selection logic
+            Func<string, string> BaseGha = p =>
+            {
+                if (string.IsNullOrWhiteSpace(p)) return p;
+                if (p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase)) return Path.GetFullPath(p);
+                if (p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    var basePath = StripDisabledSuffix(p); // remove ".disabled"
+                    return Path.GetFullPath(basePath);
+                }
+                return p;
+            };
+
+            // --- All GHAs referenced by items (include disabled ones; do NOT filter by File.Exists)
+            var allGhas = items
+                .Select(i => i != null ? i.Path : null)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Where(p => p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase) ||
+                            p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                .Select(BaseGha)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(CI)
+                .ToList();
+
+            // --- Selected GHAs (by IsSelected)
+            var selectedGhas = new HashSet<string>(
+                items.Where(i => i != null && i.IsSelected)
+                     .Select(i => i.Path)
+                     .Where(p => !string.IsNullOrWhiteSpace(p))
+                     .Where(p => p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase) ||
+                                 p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                     .Select(BaseGha)
+                     .Where(p => !string.IsNullOrWhiteSpace(p)),
+                CI);
+
+            // --- Selected UserObject parent directories (convert from FILE paths)
+            var selectedUserObjDirs = items
+                .Where(i => i != null && i.IsSelected)
+                .SelectMany(i => i.UserobjectPath ?? Enumerable.Empty<string>())
+                .Where(f => !string.IsNullOrWhiteSpace(f))
+                .Select(f =>
+                {
+                    var dir = Path.GetDirectoryName(f);
+                    return string.IsNullOrWhiteSpace(dir) ? null : Path.GetFullPath(dir);
+                })
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Distinct(CI)
+                .ToList();
+
+            // Start clean for this env
             Revert(envName);
 
             var manifest = new List<string>();
-            var blockExts = new[] { ".no6", ".no7", ".no8" };
-
-            // Normalize selections
-            var selected = new HashSet<string>(
-                selectedGhaPaths.Where(File.Exists).Select(Path.GetFullPath),
-                StringComparer.OrdinalIgnoreCase);
-
-            // Probe neighbors of selected + standard roots + ghlink targets
-            var probeDirs = selected
-                .Select(Path.GetDirectoryName)
-                .Where(d => !string.IsNullOrWhiteSpace(d))
-                .Distinct(StringComparer.OrdinalIgnoreCase);
-
-            var allInstalled = AllInstalledGhas(probeDirs);
-
-            // 1) Block every non-selected GHA by writing .no6/.no7/.no8
-            int blockedCount = 0;
-            foreach (var gha in allInstalled)
-            {
-                if (selected.Contains(gha)) continue;
-
-                foreach (var ext in blockExts)
-                {
-                    var blockPath = Path.ChangeExtension(gha, ext);
-                    if (!File.Exists(blockPath))
-                    {
-                        File.WriteAllText(blockPath, "// Created by GhPlugins Mode Manager");
-                        manifest.Add(blockPath);
-                    }
-                }
-                blockedCount++;
-            }
-
-            // 2) Ensure selected GHAs are unblocked (remove any existing .no6/.no7/.no8)
-            foreach (var gha in selected)
-            {
-                foreach (var ext in blockExts)
-                {
-                    var s = Path.ChangeExtension(gha, ext);
-                    if (File.Exists(s))
-                    {
-                        try { File.Delete(s); } catch { /* ignore */ }
-                    }
-                }
-            }
-
-            // 3) If any selected plugin lives outside default probe paths and Yak, add a .ghlink
             var defaultLib = DefaultLibraries();
+            var defaultUO = DefaultUserObjects();
             Directory.CreateDirectory(defaultLib);
+            Directory.CreateDirectory(defaultUO);
 
-            // Build Yak roots (7.0 & 8.0) without newer language features
-            var yakRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var y in YakRoots()) yakRoots.Add(y);
+            // --------- GHAs: block/unblock by rename ---------
+            int blockedGha = 0, unblockedGha = 0;
 
-            var extraDirs = selected
+            foreach (var ghaBase in allGhas)
+            {
+                var normal = ghaBase;                      // *.gha
+                var disabled = ghaBase + DisabledSuffix;   // *.gha.disabled
+                var isSelected = selectedGhas.Contains(ghaBase);
+
+                try
+                {
+                    if (!isSelected)
+                    {
+                        // Block: *.gha -> *.gha.disabled
+                        if (File.Exists(normal) && !File.Exists(disabled))
+                        {
+                            File.Move(normal, disabled);
+                            manifest.Add("REN\t" + normal + "\t" + disabled);
+                            blockedGha++;
+                        }
+                    }
+                    else
+                    {
+                        // Unblock: *.gha.disabled -> *.gha
+                        if (!File.Exists(normal) && File.Exists(disabled))
+                        {
+                            File.Move(disabled, normal);
+                            manifest.Add("REN\t" + disabled + "\t" + normal);
+                            unblockedGha++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RhinoApp.WriteLine("[Gh Mode Manager] ⚠️ GHA rename failed ({0}): {1}", ghaBase, ex.Message);
+                }
+            }
+
+            // --------- UserObjects: block/unblock by rename ---------
+            // Build universe of UO files: default UO + ghlink targets + selected UO dirs
+            var uoRoots = new HashSet<string>(CI) { defaultUO };
+            foreach (var t in ExistingGhlinkTargets(defaultUO)) uoRoots.Add(t);
+            foreach (var d in selectedUserObjDirs) uoRoots.Add(d);
+
+            var allGhusers = new HashSet<string>(CI);
+            foreach (var root in uoRoots)
+            {
+                if (!Directory.Exists(root)) continue;
+
+                foreach (var f in Directory.EnumerateFiles(root, "*.ghuser", SearchOption.AllDirectories))
+                    allGhusers.Add(Path.GetFullPath(f));
+
+                foreach (var f in Directory.EnumerateFiles(root, "*.ghuser" + DisabledSuffix, SearchOption.AllDirectories))
+                    allGhusers.Add(Path.GetFullPath(f)); // include disabled so we can unblock
+            }
+
+            int blockedUO = 0, unblockedUO = 0;
+
+            foreach (var f in allGhusers)
+            {
+                var isDisabled = f.EndsWith(".ghuser" + DisabledSuffix, StringComparison.OrdinalIgnoreCase);
+                var normal = isDisabled ? StripDisabledSuffix(f) : f;   // *.ghuser
+                var disabled = normal + DisabledSuffix;                 // *.ghuser.disabled
+
+                // Selected if its parent directory is under any selectedUserObjDirs
+                var parent = Path.GetDirectoryName(normal) ?? string.Empty;
+                var underSelectedFolder = selectedUserObjDirs.Any(sel => parent.StartsWith(sel, StringComparison.OrdinalIgnoreCase));
+
+                try
+                {
+                    if (!underSelectedFolder)
+                    {
+                        // Block
+                        if (File.Exists(normal) && !File.Exists(disabled))
+                        {
+                            File.Move(normal, disabled);
+                            manifest.Add("REN\t" + normal + "\t" + disabled);
+                            blockedUO++;
+                        }
+                    }
+                    else
+                    {
+                        // Unblock
+                        if (!File.Exists(normal) && File.Exists(disabled))
+                        {
+                            File.Move(disabled, normal);
+                            manifest.Add("REN\t" + disabled + "\t" + normal);
+                            unblockedUO++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RhinoApp.WriteLine("[Gh Mode Manager] ⚠️ UserObject rename failed ({0}): {1}", f, ex.Message);
+                }
+            }
+
+            // --------- .ghlink for extra plugin & userobject folders ---------
+            var yakRoots = new HashSet<string>(YakRoots(), CI);
+
+            var extraPluginDirs = selectedGhas
                 .Select(Path.GetDirectoryName)
                 .Where(d =>
                     !string.IsNullOrWhiteSpace(d) &&
                     !d.StartsWith(defaultLib, StringComparison.OrdinalIgnoreCase) &&
                     !yakRoots.Any(y => d.StartsWith(y, StringComparison.OrdinalIgnoreCase)))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(CI)
                 .ToList();
 
-            if (extraDirs.Count > 0)
+            if (extraPluginDirs.Count > 0)
             {
                 var linkPath = Path.Combine(defaultLib, "GhPlugins_" + Sanitize(envName) + ".ghlink");
-                File.WriteAllLines(linkPath, extraDirs);
-                manifest.Add(linkPath);
+                File.WriteAllLines(linkPath, extraPluginDirs);
+                manifest.Add("DEL\t" + linkPath); // delete on revert
             }
 
-            // 4) Persist manifest so we can revert later
+            var extraUserObjDirs = selectedUserObjDirs
+                .Where(d => !d.StartsWith(defaultUO, StringComparison.OrdinalIgnoreCase))
+                .Distinct(CI)
+                .ToList();
+
+            if (extraUserObjDirs.Count > 0)
+            {
+                var uoLinkPath = Path.Combine(defaultUO, "GhUserObjects_" + Sanitize(envName) + ".ghlink");
+                File.WriteAllLines(uoLinkPath, extraUserObjDirs);
+                manifest.Add("DEL\t" + uoLinkPath); // delete on revert
+            }
+
+            // --------- Save manifest & log ---------
             File.WriteAllLines(ManifestPath(envName), manifest);
 
-            // 5) Helpful proof in Rhino's command line
-            Rhino.RhinoApp.WriteLine(
-                "[Gh Mode Manager] Kept {0} plugin(s), blocked {1} plugin(s). {2}",
-                selected.Count, blockedCount,
-                extraDirs.Count > 0 ? ("Linked " + extraDirs.Count + " extra folder(s).") : "No extra folders.");
-            Rhino.RhinoApp.WriteLine("[Gh Mode Manager] Libraries: " + defaultLib);
-            foreach (var y in yakRoots) Rhino.RhinoApp.WriteLine("[Gh Mode Manager] Yak: " + y);
+            //RhinoApp.WriteLine("[Gh Mode Manager] GHAs: blocked {0}, unblocked {1}.", blockedGha, unblockedGha);
+            //RhinoApp.WriteLine("[Gh Mode Manager] UserObjects: blocked {0}, unblocked {1}.", blockedUO, unblockedUO);
+            //RhinoApp.WriteLine("[Gh Mode Manager] Libraries: " + DefaultLibraries());
+            //foreach (var y in yakRoots) RhinoApp.WriteLine("[Gh Mode Manager] Yak: " + y);
+            //RhinoApp.WriteLine("[Gh Mode Manager] UserObjects: " + DefaultUserObjects());
         }
-
     }
 }

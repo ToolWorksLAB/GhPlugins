@@ -1,10 +1,11 @@
 ﻿// File: Services/PluginScanner.cs
+using GhPlugins.Models;
+using Rhino;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
-using GhPlugins.Models;
 
 namespace GhPlugins.Services
 {
@@ -42,36 +43,114 @@ namespace GhPlugins.Services
             
         }
 
+        private static IEnumerable<string> GetFilesWithDisabled(string path, string ext)
+        {
+            return Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
+                .Where(f => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase) ||
+                            f.EndsWith(ext + ".disabled", StringComparison.OrdinalIgnoreCase));
+        }
+
         private static void ScanDirectory(string path)
         {
-          
-            
-            var ghaFiles = Directory.GetFiles(path, "*.gha", SearchOption.AllDirectories);
-            foreach (var gha in ghaFiles)
+            // --- GHA files (active + disabled)
+            foreach (var gha in GetFilesWithDisabled(path, ".gha"))
             {
-                string name = Path.GetFileName(gha);
-                pluginItems.Add(new PluginItem(name, gha));
-               
-            }
+                bool wasDisabled = gha.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
+                string activePath = gha;
 
-            var userObjectFiles = Directory.GetFiles(path, "*.ghuser", SearchOption.AllDirectories);
-            foreach (var userObject in userObjectFiles)
-            {
-              string userObjectName= PluginReader.ReadUserObject(userObject);
-                int index = pluginItems.FindIndex(o => o.Name == userObjectName);
-                if (index >= 0)
+                if (wasDisabled)
                 {
-                    pluginItems[index].UserobjectPath.Add(userObject);
+                    // Remove .disabled → physically rename file
+                    string newPath = gha.Substring(0, gha.Length - ".disabled".Length);
+                    try
+                    {
+                        if (File.Exists(newPath))
+                            File.Delete(newPath); // avoid duplicates
+
+                        File.Move(gha, newPath);
+                        activePath = newPath;
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine($"⚠️ Failed to rename disabled file '{gha}': {ex.Message}");
+                        continue;
+                    }
+                }
+
+                var info = GhaInfoReader.ReadPluginInfo(activePath);
+                if (info == null)
+                    continue;
+
+                int existingIdx = pluginItems.FindIndex(p =>
+                    p.Name.Equals(info.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (existingIdx >= 0)
+                {
+                    pluginItems[existingIdx].Version = info.Version;
+                    pluginItems[existingIdx].Path = activePath;
+                    pluginItems[existingIdx].IsSelected = !wasDisabled;
+                   
                 }
                 else
                 {
-                    pluginItems.Add(new PluginItem(userObjectName, userObject));
-                    
+                    var item = new PluginItem(info.Name, activePath)
+                    {
+                        Version = info.Version,
+                        IsSelected = !wasDisabled,
+                    };
+                    pluginItems.Add(item);
+                }
+            }
+
+            // --- UserObjects (active + disabled)
+            foreach (var uo in GetFilesWithDisabled(path, ".ghuser"))
+            {
+                bool wasDisabled = uo.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
+                string activePath = uo;
+
+                if (wasDisabled)
+                {
+                    // Remove .disabled → physically rename
+                    string newPath = uo.Substring(0, uo.Length - ".disabled".Length);
+                    try
+                    {
+                        if (File.Exists(newPath))
+                            File.Delete(newPath);
+                        File.Move(uo, newPath);
+                        activePath = newPath;
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine($"⚠️ Failed to rename disabled file '{uo}': {ex.Message}");
+                        continue;
+                    }
                 }
 
+                var userObjectName = PluginReader.ReadUserObject(activePath);
+                if (string.IsNullOrWhiteSpace(userObjectName))
+                    continue;
+
+                int index = pluginItems.FindIndex(o =>
+                    o.Name.Equals(userObjectName, StringComparison.OrdinalIgnoreCase));
+
+                if (index >= 0)
+                {
+                    pluginItems[index].UserobjectPath.Add(activePath);
+                }
+                else
+                {
+                    var orphan = new PluginItem(userObjectName, activePath)
+                    {
+                        IsSelected = !wasDisabled,
+                       
+                    };
+                    orphan.UserobjectPath.Add(activePath);
+                    pluginItems.Add(orphan);
+                }
             }
-          
         }
+
+
 
     }
 }
