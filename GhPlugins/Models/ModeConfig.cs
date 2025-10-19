@@ -5,17 +5,17 @@ namespace GhPlugins.Models
     public class ModeConfig
     {
         public string Name { get; set; }
-        public List<PluginItem> PluginPaths { get; set; }
+        public List<PluginItem> Plugins { get; set; }
 
         public ModeConfig()
         {
-            PluginPaths = new List<PluginItem>();
+            Plugins = new List<PluginItem>();
         }
 
-        public ModeConfig(string name, List<PluginItem> pluginPaths)
+        public ModeConfig(string name, List<PluginItem> plugins)
         {
             Name = name;
-            PluginPaths = pluginPaths;
+            Plugins = plugins;
         }
     }
 }

@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using static Rhino.UI.Internal.DwgOptions;
 
 namespace GhPlugins.Services
 {
@@ -16,17 +15,14 @@ namespace GhPlugins.Services
         {
             string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
-            // 1) Grasshopper \ Libraries
             string userLibPath = Path.Combine(roaming, "Grasshopper", "Libraries");
             if (Directory.Exists(userLibPath))
                 ScanDirectory(userLibPath);
 
-            // 2) Grasshopper \ UserObjects  (FIX: check the correct variable)
             string userobjPath = Path.Combine(roaming, "Grasshopper", "UserObjects");
             if (Directory.Exists(userobjPath))
                 ScanDirectory(userobjPath);
 
-            // 3) Yak packages (scan the whole tree once; this is recursive)
             string yakPath = Path.Combine(roaming, "McNeel", "Rhinoceros", "packages");
             if (Directory.Exists(yakPath))
                 ScanDirectory(yakPath);
@@ -35,7 +31,6 @@ namespace GhPlugins.Services
         // ---------- helpers ----------
         private static IEnumerable<string> GetFilesWithDisabled(string path, string ext)
         {
-            // ext is like ".gha", ".ghuser", ".ghpy"
             return Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
                 .Where(f => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase) ||
                             f.EndsWith(ext + ".disabled", StringComparison.OrdinalIgnoreCase));
@@ -43,24 +38,90 @@ namespace GhPlugins.Services
 
         private static string FileNameWithoutDoubleExtension(string fullPath, string ext)
         {
-            // Handles ".gha.disabled" -> ".gha" then strips ".gha" to get the base name
             string p = fullPath;
             if (p.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase))
                 p = p.Substring(0, p.Length - ".disabled".Length);
             if (p.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-                return Path.GetFileNameWithoutExtension(p); // strip .gha / .ghpy / .ghuser
+                return Path.GetFileNameWithoutExtension(p);
             return Path.GetFileNameWithoutExtension(fullPath);
         }
 
         private static string GetGhpyName(string filePath)
         {
-            // "MyScript.ghpy" or "MyScript.ghpy.disabled" -> "MyScript"
             return FileNameWithoutDoubleExtension(filePath, ".ghpy");
+        }
+
+        private static Version ParseYakVersionFromPath(string ghaPath)
+        {
+            try
+            {
+                // ...\packages\<major>\<pkg>\<version>\file.gha -> <version>
+                var dir = Path.GetDirectoryName(ghaPath);
+                var verFolder = Path.GetFileName(dir);
+                Version v;
+                return Version.TryParse(verFolder, out v) ? v : new Version(0, 0, 0, 0);
+            }
+            catch { return new Version(0, 0, 0, 0); }
+        }
+
+        private static Version ParseVersionSafe(string versionString, string ghaPath)
+        {
+            if (!string.IsNullOrWhiteSpace(versionString))
+            {
+                Version v;
+                if (Version.TryParse(versionString, out v))
+                    return v;
+            }
+            return ParseYakVersionFromPath(ghaPath);
+        }
+
+        private static void EnsureParallelAdd(PluginItem item, string path, string versionStr)
+        {
+            if (!item.HasGhaPath(path))
+            {
+                item.GhaPaths.Add(path);
+                item.Versions.Add(versionStr ?? "");
+            }
+        }
+
+        private static void MaybeUpdateActiveIndexToNewest(PluginItem item)
+        {
+            if (item == null || item.GhaPaths == null || item.GhaPaths.Count == 0) return;
+
+            int currentMajor = RhinoApp.ExeVersion; // 7 or 8
+
+            var bestIdx = 0;
+            Version bestVer = ParseVersionSafe(item.Versions.Count > 0 ? item.Versions[0] : null, item.GhaPaths[0]);
+            bool bestYakCurrent = item.GhaPaths[0].IndexOf("\\packages\\" + currentMajor + ".", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            for (int i = 1; i < item.GhaPaths.Count; i++)
+            {
+                var p = item.GhaPaths[i];
+                var vStr = (i < item.Versions.Count) ? item.Versions[i] : null;
+                var v = ParseVersionSafe(vStr, p);
+                bool yakCurr = p.IndexOf("\\packages\\" + currentMajor + ".", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Newer version OR same version but Yak-current-major wins
+                if (v > bestVer || (v == bestVer && yakCurr && !bestYakCurrent))
+                {
+                    bestVer = v;
+                    bestYakCurrent = yakCurr;
+                    bestIdx = i;
+                }
+            }
+
+            // Set default if not set, or move to newest by policy
+            if (item.ActiveVersionIndex < 0 || item.ActiveVersionIndex >= item.GhaPaths.Count)
+                item.ActiveVersionIndex = bestIdx;
+
+            // Keep Path in sync with ActiveVersionIndex
+            
+                
         }
 
         private static void ScanDirectory(string path)
         {
-            // ---------- GHA (active + disabled), grouped by plugin Name ----------
+            // ---------- GHA ----------
             foreach (var gha in GetFilesWithDisabled(path, ".gha"))
             {
                 bool wasDisabled = gha.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
@@ -68,7 +129,7 @@ namespace GhPlugins.Services
 
                 if (wasDisabled)
                 {
-                    // enable temporarily by removing ".disabled" (your choice was to physically rename)
+                    // If you switch to an unloadable loader, remove this rename.
                     string newPath = gha.Substring(0, gha.Length - ".disabled".Length);
                     try
                     {
@@ -84,48 +145,33 @@ namespace GhPlugins.Services
                 }
 
                 var info = GhaInfoReader.ReadPluginInfo(activePath);
-
                 string name = info != null ? info.Name : FileNameWithoutDoubleExtension(activePath, ".gha");
                 string version = info != null ? info.Version : null;
 
-                // Find by NAME (group all installs of the same plugin)
                 int idx = pluginItems.FindIndex(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
                 if (idx >= 0)
                 {
                     var item = pluginItems[idx];
 
-                    // primary Path: keep first seen; if empty, set it
-                    if (string.IsNullOrWhiteSpace(item.Path))
-                        item.Path = activePath;
+                    EnsureParallelAdd(item, activePath, version);
+                    MaybeUpdateActiveIndexToNewest(item);
 
-                    // add unique GHA path
-                    if (!item.HasGhaPath(activePath))
-                    {
-                        
-
-                        item.GhaPaths.Add(activePath);
-                        item.Versions.Add(GhaInfoReader.ReadPluginInfo(activePath).Version);
-                    }
-                    // fill version if missing
-            
-
-                    // consider selected if any install is enabled (optional policy)
+                    // If any install is enabled, consider plugin enabled
                     item.IsSelected = item.IsSelected || !wasDisabled;
                 }
                 else
                 {
-                    var item = new PluginItem(name, activePath);
-                    item.Versions.Add(version);
-                        item.IsSelected = !wasDisabled;
-                    if (!item.HasGhaPath(activePath))
-                        
-
+                    var item = new PluginItem(name)
+                    {
+                        IsSelected = !wasDisabled
+                    };
+                    EnsureParallelAdd(item, activePath, version);
+                    MaybeUpdateActiveIndexToNewest(item);
                     pluginItems.Add(item);
                 }
             }
 
-            // ---------- GHUSER (active + disabled), associated by Name ----------
+            // ---------- GHUSER ----------
             foreach (var uo in GetFilesWithDisabled(path, ".ghuser"))
             {
                 bool wasDisabled = uo.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
@@ -147,7 +193,6 @@ namespace GhPlugins.Services
                     }
                 }
 
-                // Try to read name from the .ghuser; fallback to file name base
                 var userObjectName = PluginReader.ReadUserObject(activePath);
                 if (string.IsNullOrWhiteSpace(userObjectName))
                     userObjectName = FileNameWithoutDoubleExtension(activePath, ".ghuser");
@@ -164,7 +209,7 @@ namespace GhPlugins.Services
                 }
                 else
                 {
-                    var orphan = new PluginItem(userObjectName, null)
+                    var orphan = new PluginItem(userObjectName)
                     {
                         IsSelected = !wasDisabled
                     };
@@ -173,7 +218,7 @@ namespace GhPlugins.Services
                 }
             }
 
-            // ---------- GHPY (active + disabled), associated by Name ----------
+            // ---------- GHPY ----------
             foreach (var ghpy in GetFilesWithDisabled(path, ".ghpy"))
             {
                 bool wasDisabled = ghpy.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
@@ -209,16 +254,13 @@ namespace GhPlugins.Services
                 }
                 else
                 {
-                    var item = new PluginItem(ghpyName, null)
+                    var item = new PluginItem(ghpyName)
                     {
                         IsSelected = !wasDisabled
                     };
                     item.ghpyPath.Add(activePath);
                     pluginItems.Add(item);
                 }
-
-                // Optional: log
-                // RhinoApp.WriteLine($"[GhPy] Found: {ghpyName} ({(wasDisabled ? "Disabled" : "Enabled")})");
             }
         }
     }

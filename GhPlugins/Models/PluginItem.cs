@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace GhPlugins.Models
@@ -8,10 +7,13 @@ namespace GhPlugins.Models
     public class PluginItem
     {
         public string Name { get; set; }
-        /// <summary>Primary path (kept as the first GHA path we encounter, can be null).</summary>
-        public string Path { get; set; }
+        /// <summary>Primary path (kept in sync with ActiveVersionIndex; may be null).</summary>
+        
         public bool IsSelected { get; set; }
+
+        /// <summary>Versions[i] belongs to GhaPaths[i]. Strings as discovered (e.g., GH_AssemblyInfo or Yak folder).</summary>
         public List<string> Versions { get; set; } = new List<string>();
+
         public string Author { get; set; }
         public string Description { get; set; }
 
@@ -21,16 +23,17 @@ namespace GhPlugins.Models
         /// <summary>All GH Python script FILE paths (.ghpy)</summary>
         public List<string> ghpyPath { get; set; } = new List<string>();
 
-        /// <summary>All install locations (FILE paths) for the plugin’s .gha</summary>
+        /// <summary>All install locations (.gha FILE paths). GhaPaths[i] ↔ Versions[i]</summary>
         public List<string> GhaPaths { get; set; } = new List<string>();
 
-        public PluginItem(string name, string path)
+        /// <summary>Index into GhaPaths/Versions that is selected. -1 means “not set”.</summary>
+        public int ActiveVersionIndex { get; set; } = -1;   
+
+        public PluginItem(string name)
         {
             Name = name;
-            Path = path;
+         
             IsSelected = false;
-            
-                
         }
 
         public override string ToString() => Name;
@@ -45,6 +48,6 @@ namespace GhPlugins.Models
 
         public bool HasGhpyPath(string p) =>
             !string.IsNullOrWhiteSpace(p) &&
-            ghpyPath.Any(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase));
+            ghpyPath.Any(x => string.Equals(x, p, System.StringComparison.OrdinalIgnoreCase));
     }
 }

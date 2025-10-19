@@ -35,14 +35,14 @@ namespace GhPlugins.Services
                 count = allPlugins != null ? allPlugins.Count : 0,
                 summary = new
                 {
-                    gha = allPlugins?.Count(p => p.Path != null && p.Path.EndsWith(".gha", StringComparison.OrdinalIgnoreCase)) ?? 0,
+                   // gha = allPlugins?.Count(p => p.Path != null && p.Path.EndsWith(".gha", StringComparison.OrdinalIgnoreCase)) ?? 0,
                     ghpy = allPlugins?.Sum(p => p.ghpyPath != null ? p.ghpyPath.Count : 0) ?? 0,
                     ghuser = allPlugins?.Sum(p => p.UserobjectPath != null ? p.UserobjectPath.Count : 0) ?? 0
                 },
                 plugins = allPlugins?.Select(p => new
                 {
                     p.Name,
-                    p.Path,
+                   // p.Path,
                     p.IsSelected,
                     
                     Author = p.Author,
@@ -73,7 +73,7 @@ namespace GhPlugins.Services
                 {
                     string name = (string)p.Name;
                     string mainPath = (string)p.Path;
-                    var item = new PluginItem(name, mainPath)
+                    var item = new PluginItem(name)
                     {
                         IsSelected = (bool)(p.IsSelected ?? false),
                         Versions = p.Versions,
