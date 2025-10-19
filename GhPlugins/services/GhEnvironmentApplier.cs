@@ -1,9 +1,9 @@
-﻿// File: Services/GhEnvironmentApplier.cs (C# 7.3 compatible)
+﻿// File: Services/GhEnvironmentApplier.cs (C# 7.3 compatible, now with .ghpy support)
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using GhPlugins.Models; // PluginItem: Name, Path, IsSelected, List<string> UserobjectPath
+using GhPlugins.Models; // PluginItem: Name, Path, IsSelected, List<string> UserobjectPath, List<string> ghpyPath
 using Rhino;
 
 namespace GhPlugins.Services
@@ -119,23 +119,25 @@ namespace GhPlugins.Services
         }
 
         /// <summary>
-        /// Applies the selected environment: renames GHAs/UserObjects and writes .ghlink files.
+        /// Applies the selected environment: renames GHAs/GHPYs/UserObjects and writes .ghlink files.
         /// </summary>
         public void Apply(string envName, IEnumerable<PluginItem> items)
         {
             items = items ?? Enumerable.Empty<PluginItem>();
 
-            // Normalize *.gha and *.gha.disabled to their base *.gha for selection logic
+            // ---- Normalize base paths (strip ".disabled" when present) ----
             Func<string, string> BaseGha = p =>
             {
                 if (string.IsNullOrWhiteSpace(p)) return p;
-                if (p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase)) return Path.GetFullPath(p);
-                if (p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
-                {
-                    var basePath = StripDisabledSuffix(p); // remove ".disabled"
-                    return Path.GetFullPath(basePath);
-                }
-                return p;
+                if (p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase)) p = StripDisabledSuffix(p);
+                return p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase) ? Path.GetFullPath(p) : null;
+            };
+
+            Func<string, string> BaseGhpy = p =>
+            {
+                if (string.IsNullOrWhiteSpace(p)) return p;
+                if (p.EndsWith(".ghpy" + DisabledSuffix, StringComparison.OrdinalIgnoreCase)) p = StripDisabledSuffix(p);
+                return p.EndsWith(".ghpy", StringComparison.OrdinalIgnoreCase) ? Path.GetFullPath(p) : null;
             };
 
             // --- All GHAs referenced by items (include disabled ones; do NOT filter by File.Exists)
@@ -157,6 +159,28 @@ namespace GhPlugins.Services
                      .Where(p => p.EndsWith(".gha", StringComparison.OrdinalIgnoreCase) ||
                                  p.EndsWith(".gha" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
                      .Select(BaseGha)
+                     .Where(p => !string.IsNullOrWhiteSpace(p)),
+                CI);
+
+            // --- All GHPYs from items
+            var allGhpy = items
+                .SelectMany(i => i != null ? (i.ghpyPath ?? Enumerable.Empty<string>()) : Enumerable.Empty<string>())
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Where(p => p.EndsWith(".ghpy", StringComparison.OrdinalIgnoreCase) ||
+                            p.EndsWith(".ghpy" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                .Select(BaseGhpy)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(CI)
+                .ToList();
+
+            // --- Selected GHPYs (only from selected items)
+            var selectedGhpy = new HashSet<string>(
+                items.Where(i => i != null && i.IsSelected)
+                     .SelectMany(i => i.ghpyPath ?? Enumerable.Empty<string>())
+                     .Where(p => !string.IsNullOrWhiteSpace(p))
+                     .Where(p => p.EndsWith(".ghpy", StringComparison.OrdinalIgnoreCase) ||
+                                 p.EndsWith(".ghpy" + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+                     .Select(BaseGhpy)
                      .Where(p => !string.IsNullOrWhiteSpace(p)),
                 CI);
 
@@ -196,7 +220,6 @@ namespace GhPlugins.Services
                 {
                     if (!isSelected)
                     {
-                        // Block: *.gha -> *.gha.disabled
                         if (File.Exists(normal) && !File.Exists(disabled))
                         {
                             File.Move(normal, disabled);
@@ -206,7 +229,6 @@ namespace GhPlugins.Services
                     }
                     else
                     {
-                        // Unblock: *.gha.disabled -> *.gha
                         if (!File.Exists(normal) && File.Exists(disabled))
                         {
                             File.Move(disabled, normal);
@@ -218,6 +240,42 @@ namespace GhPlugins.Services
                 catch (Exception ex)
                 {
                     RhinoApp.WriteLine("[Gh Mode Manager] ⚠️ GHA rename failed ({0}): {1}", ghaBase, ex.Message);
+                }
+            }
+
+            // --------- GHPYs: block/unblock by rename (same logic as GHAs) ---------
+            int blockedGhpy = 0, unblockedGhpy = 0;
+
+            foreach (var ghpyBase in allGhpy)
+            {
+                var normal = ghpyBase;                      // *.ghpy
+                var disabled = ghpyBase + DisabledSuffix;   // *.ghpy.disabled
+                var isSelected = selectedGhpy.Contains(ghpyBase);
+
+                try
+                {
+                    if (!isSelected)
+                    {
+                        if (File.Exists(normal) && !File.Exists(disabled))
+                        {
+                            File.Move(normal, disabled);
+                            manifest.Add("REN\t" + normal + "\t" + disabled);
+                            blockedGhpy++;
+                        }
+                    }
+                    else
+                    {
+                        if (!File.Exists(normal) && File.Exists(disabled))
+                        {
+                            File.Move(disabled, normal);
+                            manifest.Add("REN\t" + disabled + "\t" + normal);
+                            unblockedGhpy++;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RhinoApp.WriteLine("[Gh Mode Manager] ⚠️ GHPY rename failed ({0}): {1}", ghpyBase, ex.Message);
                 }
             }
 
@@ -255,7 +313,6 @@ namespace GhPlugins.Services
                 {
                     if (!underSelectedFolder)
                     {
-                        // Block
                         if (File.Exists(normal) && !File.Exists(disabled))
                         {
                             File.Move(normal, disabled);
@@ -265,7 +322,6 @@ namespace GhPlugins.Services
                     }
                     else
                     {
-                        // Unblock
                         if (!File.Exists(normal) && File.Exists(disabled))
                         {
                             File.Move(disabled, normal);
@@ -283,42 +339,54 @@ namespace GhPlugins.Services
             // --------- .ghlink for extra plugin & userobject folders ---------
             var yakRoots = new HashSet<string>(YakRoots(), CI);
 
-            var extraPluginDirs = selectedGhas
-                .Select(Path.GetDirectoryName)
-                .Where(d =>
-                    !string.IsNullOrWhiteSpace(d) &&
-                    !d.StartsWith(defaultLib, StringComparison.OrdinalIgnoreCase) &&
-                    !yakRoots.Any(y => d.StartsWith(y, StringComparison.OrdinalIgnoreCase)))
-                .Distinct(CI)
-                .ToList();
+            // Include dirs of selected GHAs and selected GHPYs
+            var extraPluginDirs = new HashSet<string>(CI);
+
+            foreach (var s in selectedGhas)
+            {
+                var d = Path.GetDirectoryName(s);
+                if (!string.IsNullOrWhiteSpace(d)) extraPluginDirs.Add(d);
+            }
+
+            foreach (var s in selectedGhpy)
+            {
+                var d = Path.GetDirectoryName(s);
+                if (!string.IsNullOrWhiteSpace(d)) extraPluginDirs.Add(d);
+            }
+
+            // Filter out default Libraries and Yak roots
+            extraPluginDirs = new HashSet<string>(
+                extraPluginDirs.Where(d =>
+                    !d.StartsWith(DefaultLibraries(), StringComparison.OrdinalIgnoreCase) &&
+                    !yakRoots.Any(y => d.StartsWith(y, StringComparison.OrdinalIgnoreCase))),
+                CI);
 
             if (extraPluginDirs.Count > 0)
             {
-                var linkPath = Path.Combine(defaultLib, "GhPlugins_" + Sanitize(envName) + ".ghlink");
-                File.WriteAllLines(linkPath, extraPluginDirs);
+                var linkPath = Path.Combine(DefaultLibraries(), "GhPlugins_" + Sanitize(envName) + ".ghlink");
+                File.WriteAllLines(linkPath, extraPluginDirs.ToArray());
                 manifest.Add("DEL\t" + linkPath); // delete on revert
             }
 
             var extraUserObjDirs = selectedUserObjDirs
-                .Where(d => !d.StartsWith(defaultUO, StringComparison.OrdinalIgnoreCase))
+                .Where(d => !d.StartsWith(DefaultUserObjects(), StringComparison.OrdinalIgnoreCase))
                 .Distinct(CI)
                 .ToList();
 
             if (extraUserObjDirs.Count > 0)
             {
-                var uoLinkPath = Path.Combine(defaultUO, "GhUserObjects_" + Sanitize(envName) + ".ghlink");
+                var uoLinkPath = Path.Combine(DefaultUserObjects(), "GhUserObjects_" + Sanitize(envName) + ".ghlink");
                 File.WriteAllLines(uoLinkPath, extraUserObjDirs);
                 manifest.Add("DEL\t" + uoLinkPath); // delete on revert
             }
 
-            // --------- Save manifest & log ---------
+            // --------- Save manifest ---------
             File.WriteAllLines(ManifestPath(envName), manifest);
 
-            //RhinoApp.WriteLine("[Gh Mode Manager] GHAs: blocked {0}, unblocked {1}.", blockedGha, unblockedGha);
-            //RhinoApp.WriteLine("[Gh Mode Manager] UserObjects: blocked {0}, unblocked {1}.", blockedUO, unblockedUO);
-            //RhinoApp.WriteLine("[Gh Mode Manager] Libraries: " + DefaultLibraries());
-            //foreach (var y in yakRoots) RhinoApp.WriteLine("[Gh Mode Manager] Yak: " + y);
-            //RhinoApp.WriteLine("[Gh Mode Manager] UserObjects: " + DefaultUserObjects());
+            // (Optional) summary logs
+            // RhinoApp.WriteLine("[Gh Mode Manager] GHAs: blocked {0}, unblocked {1}.", blockedGha, unblockedGha);
+            // RhinoApp.WriteLine("[Gh Mode Manager] GHPYs: blocked {0}, unblocked {1}.", blockedGhpy, unblockedGhpy);
+            // RhinoApp.WriteLine("[Gh Mode Manager] UserObjects: blocked {0}, unblocked {1}.", blockedUO, unblockedUO);
         }
     }
 }

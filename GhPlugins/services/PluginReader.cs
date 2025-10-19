@@ -3,11 +3,25 @@ using Grasshopper.Kernel;
 using GH_IO.Serialization;
 using Rhino;
 using Rhino.Commands;
+using System.IO;
 
 namespace GhPlugins.Services
 {
     public class PluginReader
     {
+        public static string GetGhpyName(string filePath)
+        {
+            string name = Path.GetFileName(filePath); // "Example.ghpy" or "Example.ghpy.disabled"
+
+            if (name.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - ".disabled".Length);
+
+            if (name.EndsWith(".ghpy", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - ".ghpy".Length);
+
+            return name; // "Example"
+        }
+
         public static void ReadGHA(string path)
         {
 
