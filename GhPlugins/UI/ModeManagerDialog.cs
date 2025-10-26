@@ -1,5 +1,4 @@
-﻿// File: UI/ModeManagerDialog.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
@@ -8,100 +7,129 @@ using Eto.Forms;
 using GhPlugins.Models;
 using GhPlugins.Services;
 using Rhino;
-using Rhino.PlugIns;
 
 namespace GhPlugins.UI
 {
     public class ModeManagerDialog : Dialog
     {
-      //  private readonly GhEnvironmentApplier _envApplier = new GhEnvironmentApplier();
         private Button createButton;
         private Button selectPluginsButton;
         private Button selectEnvironmentButton;
         private Button launchButton;
+
         private List<PluginItem> allPlugins = new List<PluginItem>();
         private ModeConfig selectedEnvironment;
 
         public ModeManagerDialog()
         {
-            
-            Title = "Grasshopper Mode Manager";
-            ClientSize = new Size(600, 300);
+            Title = "Grasshopper Plugin Manager";
+            ClientSize = new Size(730, 200);
             Resizable = false;
 
-            createButton = new Button { Text = "Create New\nEnvironment", BackgroundColor = Colors.HotPink, TextColor = Colors.Black };
-            selectPluginsButton = new Button { Text = "Select Plugins", BackgroundColor = Colors.CornflowerBlue, TextColor = Colors.Black };
-            selectEnvironmentButton = new Button { Text = "Select Environment", BackgroundColor = Colors.Gold, TextColor = Colors.Black };
-            launchButton = new Button { Text = "Launch\nGrasshopper", Font = new Font(SystemFont.Bold, 12), Enabled = false };
+            var bigBtnSize = new Size(170, 68);
+            var logoSize = new Size(60, 60);
+
+            createButton = new Button
+            {
+                Text = "Create New\nEnvironment",
+                BackgroundColor = Colors.HotPink,
+                TextColor = Colors.Black,
+                Font = new Font(SystemFont.Bold, 10),
+                Size = bigBtnSize
+            };
+            selectPluginsButton = new Button
+            {
+                Text = "Select Plugins",
+                BackgroundColor = Colors.CornflowerBlue,
+                TextColor = Colors.Black,
+                Font = new Font(SystemFont.Bold, 10),
+                Size = bigBtnSize
+            };
+            selectEnvironmentButton = new Button
+            {
+                Text = "Select Environment",
+                BackgroundColor = Colors.Gold,
+                TextColor = Colors.Black,
+                Font = new Font(SystemFont.Bold, 10),
+                Size = bigBtnSize
+            };
+            launchButton = new Button
+            {
+                Text = "Launch Grasshopper",
+                Enabled = false,
+                Font = new Font(SystemFont.Bold, 16),
+                MinimumSize = new Size(100, logoSize.Height)
+            };
 
             createButton.Click += (s, e) => CreateEnvironment();
             selectPluginsButton.Click += (s, e) => ManualPluginSelection();
             selectEnvironmentButton.Click += (s, e) => SelectSavedEnvironment();
-            launchButton.Click += (s, e) => LaunchGrasshopper(); 
+            launchButton.Click += (s, e) => LaunchGrasshopper();
 
-            var topButtons = new StackLayout
+            Control logoControl;
+            var asm = Assembly.GetExecutingAssembly();
+            using (var ls = asm.GetManifestResourceStream("GhPlugins.Resources.logo.png"))
+                logoControl = ls != null ? (Control)new ImageView { Image = new Bitmap(ls), Size = logoSize }
+                                         : new Panel { Size = logoSize };
+
+            var topRow = new TableLayout
+            {
+                Padding = new Padding(24, 20, 24, 10),
+                Spacing = new Size(24, 0),
+                Rows =
+                {
+                    new TableRow(
+                        new TableCell(new Panel(), true),
+                        new TableCell(createButton),
+                        new TableCell(selectPluginsButton),
+                        new TableCell(selectEnvironmentButton),
+                        new TableCell(new Panel(), true)
+                    )
+                }
+            };
+
+            var bottomStrip = new StackLayout
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 10,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Spacing = 24,
+                Padding = new Padding(24, 0, 24, 24),
                 Items =
                 {
-                    new StackLayoutItem(createButton, true),
-                    new StackLayoutItem(selectPluginsButton, true),
-                    new StackLayoutItem(selectEnvironmentButton, true)
+                    new StackLayoutItem(launchButton, true),
+                    new StackLayoutItem(logoControl)
                 }
             };
+            var bottomHost = new Panel { Content = bottomStrip, MinimumSize = new Size(0, logoSize.Height) };
 
-            // Optional logo
-            ImageView logo = null;
-            var assembly = Assembly.GetExecutingAssembly();
-            using (var stream = assembly.GetManifestResourceStream("GhPlugins.Resources.logo.png"))
+            var filler = new StackLayout();
+
+            Content = new TableLayout
             {
-                if (stream != null)
+                Rows =
                 {
-                    var logoBitmap = new Bitmap(stream);
-                    logo = new ImageView { Image = logoBitmap, Size = new Size(80, 80) };
+                    topRow,
+                    new TableRow(new TableCell(filler, true)),
+                    bottomHost
                 }
-            }
-
-            var bottomPanel = new StackLayout
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 10,
-                Padding = new Padding(10),
-                Items = { new StackLayoutItem(launchButton, HorizontalAlignment.Stretch, true) }
-            };
-            if (logo != null) bottomPanel.Items.Add(new StackLayoutItem(logo, HorizontalAlignment.Right));
-
-            Content = new StackLayout
-            {
-                Orientation = Orientation.Vertical,
-                Spacing = 10,
-                Padding = new Padding(10),
-                Items = { topButtons, bottomPanel }
             };
         }
 
         private void CreateEnvironment()
         {
-            var info = GhaInfoReader.ReadPluginInfo("C:/Users/erfan/AppData/Roaming/Grasshopper/Libraries/chromodoris.gha");
-            if (info != null)
-            {
-                RhinoApp.WriteLine($"Name: {info.Name}");
-                RhinoApp.WriteLine($"Version: {info.Version}");
-                RhinoApp.WriteLine($"Author: {info.AuthorName} ({info.AuthorContact})");
-                RhinoApp.WriteLine($"Description: {info.Description}");
-                RhinoApp.WriteLine($"Id: {info.Id}");
-                RhinoApp.WriteLine($"Location: {info.Location}");
-            }
-            else
-            {
-                Console.WriteLine("No GH_AssemblyInfo metadata found in that .gha");
-            }
-
             PluginScanner.ScanDefaultPluginFolders();
             allPlugins = PluginScanner.pluginItems;
-            var checkForm = new CheckBoxForm(allPlugins);
+
+            var checkForm = new CheckBoxForm(
+                allPlugins,
+                true,
+                () =>
+                {
+                    PluginScanner.ScanDefaultPluginFolders();
+                    return PluginScanner.pluginItems;
+                });
+
+            // If you don't have the 3-arg overload yet, use:
+            // var checkForm = new CheckBoxForm(allPlugins, true);
 
             if (checkForm.ShowModal(this) == DialogResult.Ok)
             {
@@ -112,22 +140,30 @@ namespace GhPlugins.UI
                 if (string.IsNullOrWhiteSpace(envName)) return;
 
                 var environments = ModeManager.LoadEnvironments();
-
                 environments.Add(new ModeConfig(envName, selected));
                 ModeManager.SaveEnvironments(environments);
 
-                RhinoApp.WriteLine($"Environment '{envName}' created with {selected.Count} plugins.");
+                RhinoApp.WriteLine("Environment '{0}' created with {1} plugins.", envName, selected.Count);
+                launchButton.Enabled = true;
             }
         }
 
         private void ManualPluginSelection()
         {
             PluginScanner.ScanDefaultPluginFolders();
-
             allPlugins = PluginScanner.pluginItems;
 
+            var checkForm = new CheckBoxForm(
+                allPlugins,
+                true,
+                () =>
+                {
+                    PluginScanner.ScanDefaultPluginFolders();
+                    return PluginScanner.pluginItems;
+                });
 
-            var checkForm = new CheckBoxForm(allPlugins);
+            // Or without onRescan:
+            // var checkForm = new CheckBoxForm(allPlugins, true);
 
             if (checkForm.ShowModal(this) == DialogResult.Ok)
             {
@@ -135,7 +171,8 @@ namespace GhPlugins.UI
                     "Manual",
                     allPlugins.Where(p => p.IsSelected).ToList()
                 );
-                launchButton.Enabled = selectedEnvironment.Plugins?.Count > 0;
+
+                launchButton.Enabled = selectedEnvironment.Plugins != null && selectedEnvironment.Plugins.Count > 0;
             }
         }
 
@@ -155,78 +192,57 @@ namespace GhPlugins.UI
             {
                 string selectedName = dialog.SelectedItem;
                 selectedEnvironment = environments.FirstOrDefault(e => e.Name == selectedName);
-                launchButton.Enabled = selectedEnvironment != null && selectedEnvironment.Plugins?.Count > 0;
+                launchButton.Enabled = selectedEnvironment != null && selectedEnvironment.Plugins != null && selectedEnvironment.Plugins.Count > 0;
             }
         }
 
-        // -------- THE IMPORTANT PART --------
-        // -------- THE IMPORTANT PART --------
-
-
         public void LaunchGrasshopper()
         {
-            var savedAt = GhPlugins.Services.ScanReport.Save(PluginScanner.pluginItems, "after_scan");
-            RhinoApp.WriteLine("[Gh Mode Manager] Scan report saved: " + savedAt);
-            GhPluginBlocker.applyPluginDisable(allPlugins, selectedEnvironment);
+            var env = selectedEnvironment ?? new ModeConfig("Manual", allPlugins.Where(p => p.IsSelected).ToList());
+
+            GhPluginBlocker.applyPluginDisable(allPlugins, env);
             GhPluginBlocker.ApplyBlocking(allPlugins);
 
             try
             {
-                // 1) Apply the environment (writes .disabled + optional .ghlink)
-                //_envApplier.Apply(selectedEnvironment.Name, allPlugins);
-                RhinoApp.WriteLine($"[Gh Mode Manager] Environment '{selectedEnvironment.Name}' applied.");
-
-                // 2) Close this modal dialog FIRST so GH can show its window,
-                //    then launch on the next Rhino idle tick (keep original structure).
+                RhinoApp.WriteLine("[Gh Mode Manager] Environment applied.");
                 RhinoApp.Idle += LaunchGrasshopperOnIdle;
                 this.Close();
-
-
             }
             catch (Exception ex)
             {
                 RhinoApp.WriteLine("ERROR in LaunchGrasshopper: " + ex);
                 MessageBox.Show(this, "Failed to launch Grasshopper. See Rhino command line for details.", "Mode Manager");
             }
-            RhinoApp.Idle += LaunchGrasshopperOnIdle;
         }
-         
+
         private void LaunchGrasshopperOnIdle(object sender, EventArgs e)
         {
             Rhino.RhinoApp.Idle -= LaunchGrasshopperOnIdle;
 
             try
-            { 
-                // Make sure GH is actually loaded (safe across R7/R8; avoids GUID overload issues)
+            {
                 Rhino.RhinoApp.RunScript("-_Grasshopper _Load _Enter", false);
 
-                // Then get the scripting object (may be null briefly)
                 dynamic gh = null;
-                try { gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper"); } catch { /* ignore */ }
+                try { gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper"); } catch { }
 
-                // Try to detect/load the editor, but guard calls (some builds lack these members)
                 bool editorLoaded = false;
                 if (gh != null)
                 {
-                    try { editorLoaded = gh.IsEditorLoaded(); } catch { /* method may not exist */ }
+                    try { editorLoaded = gh.IsEditorLoaded(); } catch { }
                     if (!editorLoaded)
                     {
-                        try { gh.LoadEditor(); } catch { /* command fallback below will handle it */ }
+                        try { gh.LoadEditor(); } catch { }
                     }
                 }
 
-                // Nudge the editor to show on next UI tick (the “flash”)
-                var t = new Eto.Forms.UITimer { Interval = 0.60};
+                var t = new Eto.Forms.UITimer { Interval = 0.60 };
                 t.Elapsed += (s2, e2) =>
                 {
                     t.Stop();
-                    try { gh?.ShowEditor(true); } catch {
-
-                        
-                        RhinoApp.WriteLine("Shit");/* not on all builds */ }
-
+                    try { gh?.ShowEditor(true); } catch { }
                     Rhino.RhinoApp.RunScript("-_Grasshopper _Editor _Enter", false);
-                    
                     RhinoApp.RunScript("_Grasshopper", false);
                 };
                 t.Start();
@@ -236,10 +252,6 @@ namespace GhPlugins.UI
                 Rhino.RhinoApp.WriteLine("ERROR launching Grasshopper: " + ex);
             }
         }
-
-
-
-        // ------------------------------------
 
         private string InputBox(string message)
         {

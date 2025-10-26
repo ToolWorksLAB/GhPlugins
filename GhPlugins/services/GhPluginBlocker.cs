@@ -1,9 +1,8 @@
-﻿// File: Services/GhPluginBlocker.cs
-using System;
-using System.Collections;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using GhPlugins.Models;
 using Rhino;
 
@@ -13,200 +12,238 @@ namespace GhPlugins.Services
     {
         private const string DisabledSuffix = ".disabled";
 
-        public static void applyPluginDisable(List<PluginItem> allPlugins, ModeConfig mf)
+        public static void applyPluginDisable(List<PluginItem> allPlugins, ModeConfig selectedEnvironment)
         {
-                foreach (var plugin in allPlugins)
-            {
-                if (mf.Plugins.Contains(plugin))
-                {
-                    plugin.IsSelected = true;
-                }
-                else
-                {
-                    plugin.IsSelected = false;
-                }
-            }
-        }
-            // Public entry point
-            public static void ApplyBlocking(List<PluginItem> allPlugins)
-        {
-            if (allPlugins == null || allPlugins.Count == 0)
-            {
-                RhinoApp.WriteLine("[Gh Mode Manager] No plugins to process.");
-                return;
-            }
+            if (allPlugins == null || selectedEnvironment == null) return;
+
+            var selectedNames = new HashSet<string>(
+                selectedEnvironment.Plugins.Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var p in allPlugins)
+                p.IsSelected = (p != null && selectedNames.Contains(p.Name));
+
+            ExpandSelectionToFamilies(allPlugins);
+        }
+
+        public static void ApplyBlocking(List<PluginItem> allPlugins)
+        {
+            if (allPlugins == null) return;
+
+            foreach (var plugin in allPlugins)
             {
                 try
                 {
-                    if (p == null) continue;
+                    bool selected = plugin.IsSelected;
 
-                    RhinoApp.WriteLine($"[Gh Mode Manager] Processing: {p.Name} (Selected={p.IsSelected}, ActiveIndex={p.ActiveVersionIndex})");
+                    if (plugin.GhaPaths != null)
+                        foreach (var path in plugin.GhaPaths.Where(s => !string.IsNullOrWhiteSpace(s)))
+                            Toggle(path, selected);
 
-                    if (!p.IsSelected)
-                    {
-                        // Block everything
-                        BlockMany(p.GhaPaths, ".gha");
-                        BlockMany(p.UserobjectPath, ".ghuser");
-                        BlockMany(p.ghpyPath, ".ghpy");
-                    }
-                    else
-                    {
-                        // GHA: unblock only ActiveVersionIndex; block the rest
-                        if (p.GhaPaths != null && p.GhaPaths.Count > 0)
-                        {
-                            if (p.ActiveVersionIndex < 0 || p.ActiveVersionIndex >= p.GhaPaths.Count)
-                            {
-                                RhinoApp.WriteLine($"[Gh Mode Manager] ⚠️ {p.Name}: ActiveVersionIndex out of range → blocking all GHAs.");
-                                BlockMany(p.GhaPaths, ".gha");
-                            }
-                            else
-                            {
-                                for (int i = 0; i < p.GhaPaths.Count; i++)
-                                {
-                                    var path = p.GhaPaths[i];
-                                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    if (plugin.UserobjectPath != null)
+                        foreach (var path in plugin.UserobjectPath.Where(s => !string.IsNullOrWhiteSpace(s)))
+                            Toggle(path, selected);
 
-                                    if (i == p.ActiveVersionIndex)
-                                        EnsureUnblocked(path, ".gha");
-                                    else
-                                        EnsureBlocked(path, ".gha");
-                                }
-                            }
-                        }
-
-                        // User objects & GHPY: always unblock all when selected
-                        UnblockMany(p.UserobjectPath, ".ghuser");
-                        UnblockMany(p.ghpyPath, ".ghpy");
-                    }
+                    if (plugin.ghpyPath != null)
+                        foreach (var path in plugin.ghpyPath.Where(s => !string.IsNullOrWhiteSpace(s)))
+                            Toggle(path, selected);
                 }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[Gh Mode Manager] ❌ Error while processing '{p?.Name}': {ex.Message}");
+                    RhinoApp.WriteLine("⚠️ Error toggling {0}: {1}", plugin != null ? plugin.Name : "<null>", ex.Message);
                 }
             }
         }
 
-        // ---------- Helpers ----------
-        private static void BlockMany(IEnumerable<string> paths, string expectedExt)
+        private static void Toggle(string cleanPath, bool enable)
         {
-            if (paths == null) return;
-            foreach (var raw in paths.Where(s => !string.IsNullOrWhiteSpace(s)))
-                EnsureBlocked(raw, expectedExt);
-        }
+            string disabledPath = cleanPath + DisabledSuffix;
 
-        private static void UnblockMany(IEnumerable<string> paths, string expectedExt)
-        {
-            if (paths == null) return;
-            foreach (var raw in paths.Where(s => !string.IsNullOrWhiteSpace(s)))
-                EnsureUnblocked(raw, expectedExt);
-        }
-
-        private static bool EnsureBlocked(string originalPath, string expectedExt)
-        {
-            var (clean, disabled) = NormalizePaths(originalPath, expectedExt);
-            try
+            if (enable)
             {
-                // Already blocked?
-                if (!File.Exists(clean) && File.Exists(disabled))
+                if (File.Exists(disabledPath))
                 {
-                    RhinoApp.WriteLine($"[Gh Mode Manager] • Already blocked: {Path.GetFileName(originalPath)}");
-                    return true;
+                    if (File.Exists(cleanPath)) File.Delete(cleanPath);
+                    File.Move(disabledPath, cleanPath);
                 }
-
-                // If the clean file exists, rename to .disabled
-                if (File.Exists(clean))
-                {
-                    SafeMove(clean, disabled, $"block {Path.GetFileName(clean)}");
-                    return true;
-                }
-
-                // Neither exists — nothing to do
-                RhinoApp.WriteLine($"[Gh Mode Manager] • Skip (missing): {Path.GetFileName(originalPath)}");
-                return false;
             }
-            catch (Exception ex)
+            else
             {
-                RhinoApp.WriteLine($"[Gh Mode Manager] ⚠️ Block failed ({Path.GetFileName(originalPath)}): {ex.Message}");
-                return false;
+                if (File.Exists(cleanPath))
+                {
+                    if (File.Exists(disabledPath)) File.Delete(disabledPath);
+                    File.Move(cleanPath, disabledPath);
+                }
             }
         }
 
-        private static bool EnsureUnblocked(string originalPath, string expectedExt)
+        private static void ExpandSelectionToFamilies(List<PluginItem> all)
         {
-            var (clean, disabled) = NormalizePaths(originalPath, expectedExt);
-            try
+            if (all == null || all.Count == 0) return;
+
+            Func<string, string> Key = s =>
             {
-                // Already unblocked?
-                if (File.Exists(clean))
-                {
-                    RhinoApp.WriteLine($"[Gh Mode Manager] • Already unblocked: {Path.GetFileName(originalPath)}");
-                    return true;
-                }
+                if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+                var chars = s.Where(char.IsLetterOrDigit).ToArray();
+                return new string(chars).ToLowerInvariant();
+            };
 
-                // If disabled exists, rename back
-                if (File.Exists(disabled))
+            // A) family-name linking
+            var byKey = new Dictionary<string, List<PluginItem>>();
+            foreach (var p in all)
+            {
+                string k = Key(p != null ? p.Name : "");
+                List<PluginItem> list;
+                if (!byKey.TryGetValue(k, out list))
                 {
-                    SafeMove(disabled, clean, $"unblock {Path.GetFileName(clean)}");
-                    return true;
+                    list = new List<PluginItem>();
+                    byKey[k] = list;
                 }
-
-                // Neither exists — nothing to do
-                RhinoApp.WriteLine($"[Gh Mode Manager] • Skip (missing): {Path.GetFileName(originalPath)}");
-                return false;
+                list.Add(p);
             }
-            catch (Exception ex)
+            foreach (var kv in byKey)
+                if (kv.Value.Any(pi => pi != null && pi.IsSelected))
+                    foreach (var pi in kv.Value) pi.IsSelected = true;
+
+            // B) assembly-name affinity (GHAs)
+            var asmMap = new Dictionary<string, List<PluginItem>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in all)
             {
-                RhinoApp.WriteLine($"[Gh Mode Manager] ⚠️ Unblock failed ({Path.GetFileName(originalPath)}): {ex.Message}");
-                return false;
+                if (p == null || p.GhaPaths == null) continue;
+                foreach (var gha in p.GhaPaths.Where(File.Exists))
+                {
+                    try
+                    {
+                        var an = AssemblyName.GetAssemblyName(gha).Name;
+                        List<PluginItem> list;
+                        if (!asmMap.TryGetValue(an, out list))
+                        {
+                            list = new List<PluginItem>();
+                            asmMap[an] = list;
+                        }
+                        if (!list.Contains(p)) list.Add(p);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+
+            foreach (var p in all.Where(x => x != null && x.IsSelected))
+            {
+                bool hasGha = (p.GhaPaths != null && p.GhaPaths.Count > 0);
+                bool hasUo = (p.UserobjectPath != null && p.UserobjectPath.Count > 0);
+                if (!hasUo || hasGha) continue;
+
+                string k = Key(p.Name ?? "");
+                foreach (var kv in asmMap)
+                {
+                    string ak = Key(kv.Key);
+                    if (ak == k || ak.Contains(k) || k.Contains(ak))
+                        foreach (var prov in kv.Value)
+                            prov.IsSelected = true;
+                }
+            }
+
+            // C) Yak: if a selected user-object is in a package, pull sibling GHAs in /Components
+            PullProvidersFromYakSiblings(all);
+
+            // D) Multi-GHA package: if any GHA in a Components folder is selected, select all GHAs in that folder
+            SelectAllGhasInSameComponentsFolder(all);
+        }
+
+        private static void PullProvidersFromYakSiblings(List<PluginItem> all)
+        {
+            if (all == null || all.Count == 0) return;
+
+            var ghaOwner = new Dictionary<string, PluginItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in all)
+            {
+                if (p == null || p.GhaPaths == null) continue;
+                foreach (var g in p.GhaPaths)
+                    if (!string.IsNullOrWhiteSpace(g) && !ghaOwner.ContainsKey(g))
+                        ghaOwner[g] = p;
+            }
+
+            foreach (var p in all.Where(x => x != null && x.IsSelected))
+            {
+                var uoList = p.UserobjectPath;
+                if (uoList == null || uoList.Count == 0) continue;
+
+                foreach (var uo in uoList.Where(File.Exists))
+                {
+                    string uoDir = Path.GetDirectoryName(uo);
+                    string grasshopperDir = !string.IsNullOrEmpty(uoDir) ? Directory.GetParent(uoDir).FullName : null;
+                    if (string.IsNullOrEmpty(grasshopperDir)) continue;
+
+                    string compDir = Path.Combine(grasshopperDir, "Components");
+                    if (!Directory.Exists(compDir)) continue;
+
+                    foreach (var gha in Directory.EnumerateFiles(compDir, "*.gha", SearchOption.AllDirectories))
+                    {
+                        PluginItem owner;
+                        if (ghaOwner.TryGetValue(gha, out owner))
+                            owner.IsSelected = true;
+                    }
+                }
             }
         }
 
-        private static (string clean, string disabled) NormalizePaths(string input, string expectedExt)
+        private static void SelectAllGhasInSameComponentsFolder(List<PluginItem> all)
         {
-            var p = input.Trim();
+            if (all == null || all.Count == 0) return;
 
-            // If list contains a .disabled path, derive the clean path by removing suffix.
-            if (p.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase))
+            var byDir = new Dictionary<string, List<PluginItem>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var p in all)
             {
-                var clean = p.Substring(0, p.Length - DisabledSuffix.Length);
-                return (clean, p);
+                if (p == null || p.GhaPaths == null) continue;
+                foreach (var gha in p.GhaPaths.Where(File.Exists))
+                {
+                    string dir = Path.GetDirectoryName(gha);
+                    if (string.IsNullOrEmpty(dir)) continue;
+
+                    List<PluginItem> list;
+                    if (!byDir.TryGetValue(dir, out list))
+                    {
+                        list = new List<PluginItem>();
+                        byDir[dir] = list;
+                    }
+                    if (!list.Contains(p)) list.Add(p);
+                }
             }
 
-            // Ensure expected extension ends with ".", handle weird cases
-            if (!string.IsNullOrEmpty(expectedExt) &&
-                !p.EndsWith(expectedExt, StringComparison.OrdinalIgnoreCase) &&
-                !p.EndsWith(expectedExt + DisabledSuffix, StringComparison.OrdinalIgnoreCase))
-            {
-                // Don’t mutate file name if caller passes a non-matching path;
-                // we still block/unblock by adding/removing .disabled from the given path.
-            }
-
-            return (p, p + DisabledSuffix);
+            foreach (var kv in byDir)
+                if (kv.Value.Any(pi => pi != null && pi.IsSelected))
+                    foreach (var pi in kv.Value)
+                        pi.IsSelected = true;
         }
 
-        private static void SafeMove(string src, string dst, string actionLabel)
+        public static void UnblockEverything()
         {
-            try
+            string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string[] roots = new string[]
             {
-                // Ensure target directory exists
-                Directory.CreateDirectory(Path.GetDirectoryName(dst) ?? Path.GetTempPath());
+                Path.Combine(roaming, "Grasshopper", "Libraries"),
+                Path.Combine(roaming, "Grasshopper", "UserObjects"),
+                Path.Combine(roaming, "McNeel", "Rhinoceros", "packages")
+            };
 
-                // If a stale target exists (rare), try to remove it
-                if (File.Exists(dst))
+            foreach (var root in roots)
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var file in Directory.EnumerateFiles(root, "*.disabled", SearchOption.AllDirectories))
                 {
-                    File.SetAttributes(dst, FileAttributes.Normal);
-                    File.Delete(dst);
+                    try
+                    {
+                        string restored = file.Substring(0, file.Length - ".disabled".Length);
+                        if (File.Exists(restored)) File.Delete(restored);
+                        File.Move(file, restored);
+                        RhinoApp.WriteLine("✅ Restored: {0}", Path.GetFileName(restored));
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine("⚠️ Failed to restore {0}: {1}", file, ex.Message);
+                    }
                 }
-
-                File.Move(src, dst);
-                RhinoApp.WriteLine($"[Gh Mode Manager] • {actionLabel}");
-            }
-            catch (IOException ioEx)
-            {
-                // Common cause: file is in use (e.g., Rhino/Grasshopper already loaded it)
-                RhinoApp.WriteLine($"[Gh Mode Manager] ⚠️ Move failed (in use?) {Path.GetFileName(src)} → {Path.GetFileName(dst)}: {ioEx.Message}");
             }
         }
     }
