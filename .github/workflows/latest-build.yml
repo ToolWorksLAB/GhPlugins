@@ -1,0 +1,57 @@
+name: Latest Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "master"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 7 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '7.0.x'
+
+      - name: Build (net7.0)
+        run: dotnet build GhPlugins/Sieve.csproj -c Release -f net7.0
+
+      - name: Package build
+        shell: pwsh
+        run: |
+          $outDir = "GhPlugins/bin/Release/net7.0"
+          $stage = "artifacts/Sieve-latest"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          Copy-Item "$outDir/Sieve.rhp" $stage -ErrorAction SilentlyContinue
+          Copy-Item "$outDir/Sieve.dll" $stage -ErrorAction SilentlyContinue
+          Copy-Item "$outDir/*.pdb" $stage -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path "$stage/*" -DestinationPath "artifacts/Sieve-latest.zip" -Force
+
+      - name: Publish workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sieve-latest
+          path: artifacts/Sieve-latest.zip
+
+      - name: Publish/Update GitHub Release asset
+        uses: ncipollo/release-action@v1
+        with:
+          tag: latest-build
+          name: Latest Build
+          body: |
+            Automated latest build from GitHub Actions.
+
+            Download `Sieve-latest.zip` from this release.
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: artifacts/Sieve-latest.zip
