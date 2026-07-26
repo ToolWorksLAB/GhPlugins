@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sieve UI Mockup</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    html, body { min-height: 100%; margin: 0; }
+    body { display: grid; place-items: center; padding: 20px; background: #dededb; color: #0c0c0c; }
+    button, a { color: inherit; font: inherit; }
+    button { cursor: pointer; }
+    .window { width: min(920px, calc(100vw - 40px)); height: 350px; overflow: hidden; border: 1px solid #888; border-radius: 8px; background: #f8f8f6; box-shadow: 0 14px 40px rgba(0,0,0,.18); transition: width .2s ease, height .2s ease; }
+    .window.workspace { width: min(1180px, calc(100vw - 40px)); height: min(640px, calc(100vh - 40px)); }
+    .titlebar { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 10px; border-bottom: 1px solid #ddd; background: #f4f4f4; font-size: 12px; }
+    .close { font-size: 17px; font-weight: 300; }
+    .view { height: calc(100% - 30px); overflow: auto; background-color: #f8f8f6; background-image: radial-gradient(#111 1px, transparent 1px); background-size: 9px 9px; }
+    .home { min-height: 100%; }
+    .home-head { display: flex; min-height: 38px; justify-content: flex-end; align-items: center; padding: 8px 24px 4px; }
+    .meta { color: #575757; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .strip { display: flex; width: 800px; max-width: calc(100% - 48px); gap: 10px; margin: 0 auto; padding: 0 0 7px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scroll-snap-type: x proximity; }
+    .tile { position: relative; display: flex; width: 152px; height: 152px; min-width: 152px; flex: 0 0 152px; flex-direction: column; justify-content: space-between; padding: 10px; overflow: hidden; border: 1.5px solid #111; border-radius: 9px; background: #f8f8f6; box-shadow: 3px 3px 0 #111; text-align: left; scroll-snap-align: start; transition: transform .12s ease, box-shadow .12s ease; }
+    button.tile { appearance: none; }
+    .tile:hover { transform: translate(1px, 1px); box-shadow: 2px 2px 0 #111; }
+    .tile.black { background: #111; color: #fff; }
+    .tile.pattern { background: repeating-linear-gradient(-45deg,#f8f8f6 0,#f8f8f6 9px,#e6e6e2 9px,#e6e6e2 10px); }
+    .tile-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .tile strong { overflow: hidden; font-size: 16px; line-height: 1.05; text-overflow: ellipsis; white-space: nowrap; }
+    .tile em { color: inherit; font-size: 10px; font-style: normal; line-height: 1.3; opacity: .72; }
+    .tile .plus { font-size: 36px; font-weight: 300; line-height: 1; }
+    .preset { cursor: grab; user-select: none; }
+    .preset.dragging { cursor: grabbing; opacity: .4; transform: scale(.96); box-shadow: none; }
+    .preset-icon { width: 27px; height: 27px; object-fit: contain; }
+    .menu { position: absolute; top: 7px; right: 7px; display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid #111; border-radius: 6px; background: #fff; font-size: 16px; }
+    .manual-link { display: flex; width: 800px; max-width: calc(100% - 48px); align-items: center; justify-content: space-between; margin: 4px auto 0; padding: 7px 2px; border: 0; background: transparent; text-align: left; }
+    .manual-link span { display: flex; align-items: baseline; gap: 10px; }
+    .manual-link strong { font-size: 13px; }
+    .manual-link small { color: #666; font-size: 10px; }
+    .manual-link b { font-size: 18px; font-weight: 400; transition: transform .12s ease; }
+    .manual-link:hover b { transform: translateX(4px); }
+    .footer { display: flex; justify-content: center; gap: 12px; padding: 1px 24px 8px; }
+    .pill { padding: 6px 11px; border: 1.5px solid #111; border-radius: 999px; background: #f8f8f6; font-size: 10px; font-weight: 800; }
+    .manual-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-bottom: 1.5px solid #111; background: rgba(255,255,255,.92); }
+    .manual-head div { display: flex; align-items: center; gap: 12px; }
+    .manual-head h1 { margin: 0; font-size: 24px; }
+    .back { display: grid; width: 30px; height: 30px; place-items: center; border: 1.5px solid #111; border-radius: 50%; background: #fff; }
+    .controls { display: flex; gap: 8px; padding: 10px 18px; border-bottom: 1px solid #111; background: rgba(248,248,246,.95); }
+    .search { min-width: 0; flex: 1; height: 30px; padding: 0 11px; border: 1.5px solid #111; border-radius: 999px; background: #fff; }
+    .plugin-grid { display: grid; grid-template-columns: repeat(10, minmax(0,1fr)); gap: 6px; padding: 12px 18px 56px; }
+    .plugin { position: relative; display: flex; min-width: 0; aspect-ratio: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 7px; border: 1.5px solid #111; border-radius: 7px; background: #fff; transition: background .12s ease, color .12s ease; }
+    .plugin.on { background: #111; color: #fff; }
+    .plugin-icon { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid currentColor; border-radius: 6px; background: #fff; color: #111; font-size: 9px; font-weight: 900; }
+    .plugin-name { width: 100%; overflow: hidden; font-size: 9px; font-weight: 800; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+    .toggle { position: absolute; top: 5px; right: 5px; min-width: 27px; height: 17px; padding: 0 4px; border: 1px solid currentColor; border-radius: 999px; background: #fff; color: #111; font-size: 7px; font-weight: 900; }
+    .launch { position: absolute; right: 28px; bottom: 22px; padding: 8px 12px; border: 1.5px solid #111; border-radius: 999px; background: #111; color: #fff; font-size: 10px; font-weight: 900; }
+    .hidden { display: none; }
+    @media (max-width: 920px) { .plugin-grid { grid-template-columns: repeat(8,minmax(0,1fr)); } }
+  </style>
+</head>
+<body>
+  <section id="window" class="window">
+    <header class="titlebar"><span>Sieve</span><span class="close">&times;</span></header>
+    <div id="homeView" class="view home">
+      <header class="home-head"><span class="meta">148 unique / 7 active / just now</span></header>
+      <main>
+        <div id="strip" class="strip">
+          <button class="tile black"><span class="tile-label">01</span><strong>Basics</strong><em>Native Grasshopper only</em></button>
+          <button class="tile"><span class="tile-label">All</span><strong>All Plugins</strong><em>Enable every managed plugin</em></button>
+          <article class="tile preset" draggable="true" data-name="Facade">
+            <span class="tile-label">Preset</span><button class="menu" aria-label="Preset menu">&#8942;</button>
+            <img class="preset-icon" src="../EmbeddedResources/streamline-core-solid---free--500x500-PNG/Coffee-Mug--Streamline-Core.png" alt="">
+            <strong>Facade</strong><em>12 plugins</em>
+          </article>
+          <article class="tile preset" draggable="true" data-name="Climate">
+            <span class="tile-label">Preset</span><button class="menu" aria-label="Preset menu">&#8942;</button>
+            <img class="preset-icon" src="../EmbeddedResources/streamline-core-solid---free--500x500-PNG/Lemon-Fruit-Seasoning--Streamline-Core.png" alt="">
+            <strong>Climate</strong><em>8 plugins</em>
+          </article>
+          <article class="tile preset" draggable="true" data-name="Geometry">
+            <span class="tile-label">Preset</span><button class="menu" aria-label="Preset menu">&#8942;</button>
+            <img class="preset-icon" src="../EmbeddedResources/streamline-core-solid---free--500x500-PNG/Donut--Streamline-Core.png" alt="">
+            <strong>Geometry</strong><em>21 plugins</em>
+          </article>
+          <button id="addPreset" class="tile"><span class="tile-label">02</span><strong class="plus">+</strong><em>Make preset</em></button>
+          <button class="tile pattern"><span class="tile-label">GH</span><strong>Open File</strong><em>Analyze required plugins</em></button>
+        </div>
+        <button id="openManual" class="manual-link"><span><strong>Manual selection</strong><small>Choose plugins individually</small></span><b>&#8594;</b></button>
+      </main>
+      <footer class="footer"><button class="pill">Refresh scan</button><button class="pill">Launch history</button><button class="pill">Restore disabled files</button></footer>
+    </div>
+    <div id="manualView" class="view hidden">
+      <header class="manual-head"><div><button id="back" class="back" title="Back">&#8592;</button><h1>Manual selection</h1></div><span class="meta">7 active / 148 unique</span></header>
+      <section class="controls"><input class="search" placeholder="Search plugin, version, path"><button class="pill">Scan</button><button class="pill">Grid</button></section>
+      <section id="plugins" class="plugin-grid"></section>
+      <button class="launch">Launch selected</button>
+    </div>
+  </section>
+  <script>
+    const iconRoot = '../EmbeddedResources/streamline-core-solid---free--500x500-PNG/';
+    const presetIcons = ['Burger--Streamline-Core.png','Cake-Slice--Streamline-Core.png','Cherries--Streamline-Core.png','Popcorn--Streamline-Core.png'];
+    const pluginNames = ['Ladybug','Honeybee','Weaverbird','Kangaroo','LunchBox','Human','Elefront','Pufferfish','Anemone','MeshPlus','Wasp','Karamba','ShapeDiver','Metahopper','TreeFrog','Dendro','Hops','Galapagos','Wallacei','OpenNest','Millipede','TT Toolbox','Crystallon','Ivy','Bifocals','Gismo','Cocoon','Parakeet','PanelingTools','Rhino.Inside','Octopus','Opossum','Quelea','Nudibranch','FlexHopper','Decodes','Fox','Termite','PhysX','Monoceros'];
+    const strip = document.getElementById('strip');
+    let dragging = null;
+    function wirePreset(tile) {
+      tile.addEventListener('dragstart', event => {
+        if (event.target.closest('.menu')) { event.preventDefault(); return; }
+        dragging = tile;
+        tile.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+      });
+      tile.addEventListener('dragend', () => { tile.classList.remove('dragging'); dragging = null; });
+    }
+    document.querySelectorAll('.preset').forEach(wirePreset);
+    strip.addEventListener('dragover', event => {
+      if (!dragging) return;
+      event.preventDefault();
+      const target = event.target.closest('.preset');
+      if (!target || target === dragging) return;
+      const box = target.getBoundingClientRect();
+      strip.insertBefore(dragging, event.clientX > box.left + box.width / 2 ? target.nextSibling : target);
+    });
+    document.getElementById('addPreset').addEventListener('click', () => {
+      const index = document.querySelectorAll('.preset').length + 1;
+      const tile = document.createElement('article');
+      tile.className = 'tile preset';
+      tile.draggable = true;
+      tile.dataset.name = 'Preset ' + index;
+      tile.innerHTML = '<span class="tile-label">Preset</span><button class="menu" aria-label="Preset menu">&#8942;</button><img class="preset-icon" src="' + iconRoot + presetIcons[(index - 1) % presetIcons.length] + '" alt=""><strong>Preset ' + index + '</strong><em>' + (4 + index * 2) + ' plugins</em>';
+      strip.insertBefore(tile, document.getElementById('addPreset'));
+      wirePreset(tile);
+      strip.scrollTo({ left: strip.scrollWidth, behavior: 'smooth' });
+    });
+    const plugins = document.getElementById('plugins');
+    pluginNames.forEach((name, index) => {
+      const card = document.createElement('article');
+      card.className = 'plugin' + (index < 7 ? ' on' : '');
+      card.title = name;
+      card.innerHTML = '<button class="toggle">' + (index < 7 ? 'ON' : 'OFF') + '</button><span class="plugin-icon">' + name.replace(/[^A-Za-z0-9]/g,'').slice(0,2).toUpperCase() + '</span><span class="plugin-name">' + name + '</span>';
+      card.querySelector('.toggle').addEventListener('click', event => {
+        event.stopPropagation();
+        card.classList.toggle('on');
+        event.currentTarget.textContent = card.classList.contains('on') ? 'ON' : 'OFF';
+      });
+      plugins.appendChild(card);
+    });
+    document.getElementById('openManual').addEventListener('click', () => {
+      document.getElementById('homeView').classList.add('hidden');
+      document.getElementById('manualView').classList.remove('hidden');
+      document.getElementById('window').classList.add('workspace');
+    });
+    document.getElementById('back').addEventListener('click', () => {
+      document.getElementById('manualView').classList.add('hidden');
+      document.getElementById('homeView').classList.remove('hidden');
+      document.getElementById('window').classList.remove('workspace');
+    });
+  </script>
+</body>
+</html>
